@@ -260,24 +260,18 @@ def histo(a: MatLike) -> bool:
 
 
 def cut_sheet(image: MatLike, staff: Staff) -> List[MatLike]:
-    out = []
     interstaff = 0
     for (rh_top, _), (_, lh_bot) in zip(staff.positions[1:], staff.positions[:-1]):
         interstaff += (rh_top - lh_bot)
     interstaff //= len(staff.positions) - 1
-    roll = None
+    rolls = []
     for rh_top, lh_bot in staff.positions:
         top = rh_top - interstaff // 2
         bot = lh_bot + interstaff // 2
-        if roll is None:
-            height = bot-top
-            roll = image[top:bot, staff.left:staff.right]
-        else:
-            roll = np.concatenate(
-                (roll, image[top:top+height, staff.left:staff.right]), axis=1)
-        if show(roll):
+        rolls.append(image[top:bot, staff.left:staff.right])
+        if show(rolls[-1]):
             break
-    return out
+    return rolls
 
 
 crop = (800, 1200)
