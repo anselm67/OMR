@@ -15,6 +15,8 @@ from pdf2image import convert_from_path
 BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 
+DATADIR = Path("untracked")
+
 
 @dataclass
 class Staff:
@@ -22,7 +24,7 @@ class Staff:
     left: int
     right: int
     # For each double staff (right hand, left hand)
-    # (top of rh, bottom of lh)
+    # (rh_top: top of rh, lh_bot: bottom of lh)
     positions: List[Tuple[int, int]]
 
 
@@ -45,12 +47,12 @@ wset = [
 
 
 def save_numpy(target: Path | str, array: MatLike):
-    with open(target, "wb") as f:
+    with open(DATADIR / target, "wb") as f:
         pickle.dump(array, f)
 
 
 def load_numpy(source: Path) -> MatLike:
-    with open(source, "rb") as f:
+    with open(DATADIR / source, "rb") as f:
         return cast(MatLike, pickle.load(f))
 
 
@@ -197,7 +199,7 @@ def line_indices(lines: MatLike) -> List[Tuple[int, int]]:
     return out
 
 
-def find_staff_v2(image: MatLike) -> Staff:
+def find_staff(image: MatLike) -> Staff:
     staff = Staff(
         top_offset=0,
         left=0, right=0,
@@ -257,6 +259,27 @@ def histo(a: MatLike) -> bool:
     return len(values) == 2 and values[0] == 0 and values[1] == 255
 
 
+def cut_sheet(image: MatLike, staff: Staff) -> List[MatLike]:
+    out = []
+    interstaff = 0
+    for (rh_top, _), (_, lh_bot) in zip(staff.positions[1:], staff.positions[:-1]):
+        interstaff += (rh_top - lh_bot)
+    interstaff //= len(staff.positions) - 1
+    roll = None
+    for rh_top, lh_bot in staff.positions:
+        top = rh_top - interstaff // 2
+        bot = lh_bot + interstaff // 2
+        if roll is None:
+            height = bot-top
+            roll = image[top:bot, staff.left:staff.right]
+        else:
+            roll = np.concatenate(
+                (roll, image[top:top+height, staff.left:staff.right]), axis=1)
+        if show(roll):
+            break
+    return out
+
+
 crop = (800, 1200)
 l = load_some(*[path for _, path, _ in wset])
 tl = [denoise(x, block_size=11) for x in l]
@@ -268,9 +291,9 @@ tl = [denoise(x, block_size=11) for x in l]
 # img = create_staff((1552, 1200), default_staff)
 # show(img)
 for image in tl:
-    staff = find_staff_v2(image)
-    print(staff)
-    if show(create_staff(staff, background=image.copy())):
-        break
+    staff = find_staff(image)
+    cut_sheet(image, staff)
+    # if show(create_staff(staff, background=image.copy())):
+    #     break
 
 sys.exit(0)
