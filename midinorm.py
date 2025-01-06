@@ -19,7 +19,7 @@ from midi.typing import (
     TimeSignatureEvent,
 )
 
-DATADIR = Path("/home/anselm/Downloads/maestro-v3.0.0")
+DATADIR = Path("/home/anselm/Downloads")
 
 filename = "IMSLP172781-WIMA.cb18-wtc01.mid"
 filename = "IMSLP244002-PMLP01969-Etude,_Op._10,_No._12_'Revolutionary'.mid"
@@ -27,6 +27,9 @@ filename = "2018/MIDI-Unprocessed_Chamber3_MID--AUDIO_10_R3_2018_wav--1.midi"
 filename = "2006/MIDI-Unprocessed_22_R1_2006_01-04_ORIG_MID--AUDIO_22_R1_2006_02_Track02_wav.midi"
 filename = "2018/MIDI-Unprocessed_Recital1-3_MID--AUDIO_02_R1_2018_wav--2.midi"
 filename = "2018/MIDI-Unprocessed_Recital17-19_MID--AUDIO_19_R1_2018_wav--1.midi"
+filename = "2004/MIDI-Unprocessed_XP_14_R1_2004_01-03_ORIG_MID--AUDIO_14_R1_2004_03_Track03_wav.midi"
+filename = "2008/MIDI-Unprocessed_12_R2_2008_01-04_ORIG_MID--AUDIO_12_R2_2008_wav--1.midi"
+filename = "data_bach-bwv001-_400_chorales-008305b.mid"
 
 
 @dataclass
@@ -68,12 +71,12 @@ class MidiNorm(MidiInput):
         if e.event_type == EventType.HeaderData:
             e = cast(HeaderDataEvent, e)
             self.bars = 4 * e.divisions
-            print(f"{Format(e.format).name}: {
+            print(f"{Format(e.format).name}[{e.format}]: {
                   e.number_of_tracks} tracks, {e.divisions}.")
         elif e.event_type == EventType.TimeSignature:
             e = cast(TimeSignatureEvent, e)
             print(f"Time signature: {e.nn}/{e.dd **
-                  2} - cc: {e.cc}, dd: {e.dd}")
+                  2} - cc: {e.cc}, bb: {e.bb}")
         elif e.event_type == EventType.Tempo:
             e = cast(TempoEvent, e)
             print(f"Tempo {e.bpm}")
@@ -97,7 +100,7 @@ class MidiNorm(MidiInput):
 
 
 def parse_midi(filename: Path | str):
-    clocks_per_bar = 4*384  # wtc -> 4 * divisions = 4 * 120 = 480
+    clocks_per_bar = 4*480  # wtc -> 4 * divisions = 4 * 120 = 480
     channel_width = 18
     max_channels = 5
     with open(filename, 'rb') as file:
