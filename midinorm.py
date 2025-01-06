@@ -71,7 +71,7 @@ class MidiNorm(MidiInput):
         if e.event_type == EventType.HeaderData:
             e = cast(HeaderDataEvent, e)
             self.bars = 4 * e.divisions
-            print(f"{Format(e.format).name}[{e.format}]: {
+            print(f"{Format(e.format).name}[{e.format.value}]: {
                   e.number_of_tracks} tracks, {e.divisions}.")
         elif e.event_type == EventType.TimeSignature:
             e = cast(TimeSignatureEvent, e)
