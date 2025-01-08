@@ -80,7 +80,7 @@ def pitch_from_note_and_octave(note: str, octave: int) -> Pitch:
     return Pitch((octave, 1+index))
 
 
-CLEF_RE = re.compile("^\\*clef([a-zA-Z])([0-9])$")
+CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
 
 
 def pitch_from_clef(clef: str) -> Pitch:
@@ -164,7 +164,7 @@ class HumdrumParser:
     def error(self, msg: str):
         raise ValueError(f"{self.path}, {self.lineno}: {msg}")
 
-    COMMENT_RE = re.compile("^!!.*$")
+    COMMENT_RE = re.compile(r'^!!.*$')
 
     def next(self, throw_on_end: bool = False) -> Optional[str]:
         while True:
@@ -180,7 +180,7 @@ class HumdrumParser:
         symbol = self.next()
         assert not symbol, f"Unexpected symbol '{symbol}' after spine end."
 
-    NOTE_RE = re.compile("^([\\d]+)?(\\.*)?([a-gA-G]+)(.*)$")
+    NOTE_RE = re.compile(r'^([\d]+)?(\.*)?([a-gA-G]+)(.*)$')
 
     def parse_note(self, token) -> Note:
         if not (m := self.NOTE_RE.match(token)):
@@ -209,8 +209,8 @@ class HumdrumParser:
             is_gracenote="q" in token,
         )
 
-    REST_RE = re.compile("^([0-9]+)(\\.*)r$")
-    BAR_RE = re.compile("^=+.*$")
+    REST_RE = re.compile(r'^([0-9]+)(\.*)r$')
+    BAR_RE = re.compile(r'^=+.*$')
 
     def parse_event(self, spine: List[Symbol], symbol: str):
         if self.BAR_RE.match(symbol):
@@ -221,6 +221,9 @@ class HumdrumParser:
             pass
         elif (m := self.REST_RE.match(symbol)):
             spine.append(Rest(int(m.group(1))))
+        elif symbol.startswith("*"):
+            # TODO Hanldle spline commands.
+            pass
         else:
             notes = list([])
             for note in symbol.split():
@@ -230,10 +233,10 @@ class HumdrumParser:
             else:
                 spine.append(Chord(notes))
 
-    CLEF_RE = re.compile("^\\*clef([a-zA-Z])([0-9])$")
-    SIGNATURE_RE = re.compile("^\\*k\\[([a-z#-]+)\\]")
-    METER_RE = re.compile("^\\*M(\\d)/(\\d)$")
-    METRICAL_RE = re.compile("^\\*met\\((C\\|?)\\)$")
+    CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
+    SIGNATURE_RE = re.compile(r'\*k\[(([a-z][#-])*)\]')
+    METER_RE = re.compile(r'^\*M(\d)/(\d)$')
+    METRICAL_RE = re.compile(r'^\*met\((C\|?)\)$')
 
     def parse(self):
         self.header()
@@ -244,12 +247,13 @@ class HumdrumParser:
                     spine.append(Clef(pitch_from_note_and_octave(
                         m.group(1), int(m.group(2)))))
                 elif (m := self.SIGNATURE_RE.match(symbol)):
-                    accidental = m.group(1)
-                    # TODO Check that accidental is really valid as the RE isn't prefect.
-                    spine.append(Key(
-                        is_flats=(accidental[-1] == '-'),
-                        count=len(accidental) // 2
-                    ))
+                    # Empty key signature is allowed.
+                    if (accidental := m.group(1)):
+                        # TODO Check that accidental is really valid as the RE isn't prefect.
+                        spine.append(Key(
+                            is_flats=(accidental[-1] == '-'),
+                            count=len(accidental) // 2
+                        ))
                 elif (m := self.METER_RE.match(symbol)):
                     spine.append(Meter(
                         int(m.group(1)),
