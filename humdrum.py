@@ -254,6 +254,11 @@ class HumdrumParser:
         self.spines = spines
         return spine
 
+    def branch_spine(self, source: Spine) -> Spine:
+        branch = Spine(source)
+        self.open_spine(self.position(source), branch)
+        return branch
+
     def merge_spines(self, into: Spine, other: Spine):
         self.close_spine(other)
 
@@ -266,10 +271,10 @@ class HumdrumParser:
         if indicator == '*-':
             self.close_spine(spine)
         elif indicator == '*+':
-            pass
+            self.open_spine(self.position(spine), Spine())
         elif indicator == '*^':
             # Branch off into a new spine.
-            self.open_spine(self.position(spine), Spine(spine))
+            self.branch_spine(spine)
         elif indicator == '*v':
             for next_spine, next_token in tokens_iterator:
                 if spine and next_token == "*v":
