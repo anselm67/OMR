@@ -2,13 +2,10 @@
 # Formal syntax: https://www.humdrum.org/guide/ch05/
 # Note tokens: https://www.humdrum.org/Humdrum/representations/kern.html#Note%20Tokens
 
-import os
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import (
-    Any,
     Generic,
     Iterable,
     Iterator,
