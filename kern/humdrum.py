@@ -1,194 +1,93 @@
 # https://www.humdrum.org/guide/
 # Formal syntax: https://www.humdrum.org/guide/ch05/
+# Note tokens: https://www.humdrum.org/Humdrum/representations/kern.html#Note%20Tokens
+
 import os
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
-from typing import Iterable, Iterator, List, Optional, Tuple, Union, cast
+from typing import (
+    Any,
+    Generic,
+    Iterable,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    TypeVar,
+    Union,
+    cast,
+)
 
+from kern.typing import (
+    Bar,
+    Chord,
+    Clef,
+    Key,
+    Meter,
+    Note,
+    Null,
+    Pitch,
+    Rest,
+    Symbol,
+    pitch_from_note_and_octave,
+)
 from utils import iterable_from_file
 
-
-class Pitch(Enum):
-    C = (3, 1)
-    D = (3, 2)
-    E = (3, 3)
-    F = (3, 4)
-    G = (3, 5)
-    A = (3, 6)
-    B = (3, 7)
-
-    CC = (2, 1)
-    DD = (2, 2)
-    EE = (2, 3)
-    FF = (2, 4)
-    GG = (2, 5)
-    AA = (2, 6)
-    BB = (2, 7)
-
-    CCC = (1, 1)
-    DDD = (1, 2)
-    EEE = (1, 3)
-    FFF = (1, 4)
-    GGG = (1, 5)
-    AAA = (1, 6)
-    BBB = (1, 7)
-
-    CCCC = (0, 1)
-    DDDD = (0, 2)
-    EEEE = (0, 3)
-    FFFF = (0, 4)
-    GGGG = (0, 5)
-    AAAA = (0, 6)
-    BBBB = (0, 7)
-
-    c = (4, 1)
-    d = (4, 2)
-    e = (4, 3)
-    f = (4, 4)
-    g = (4, 5)
-    a = (4, 6)
-    b = (4, 7)
-
-    cc = (5, 1)
-    dd = (5, 2)
-    ee = (5, 3)
-    ff = (5, 4)
-    gg = (5, 5)
-    aa = (5, 6)
-    bb = (5, 7)
-
-    ccc = (6, 1)
-    ddd = (6, 2)
-    eee = (6, 3)
-    fff = (6, 4)
-    ggg = (6, 5)
-    aaa = (6, 6)
-    bbb = (6, 7)
-
-    cccc = (7, 1)
-    dddd = (7, 2)
-    eeee = (7, 3)
-    ffff = (7, 4)
-    gggg = (7, 5)
-    aaaa = (7, 6)
-    bbbb = (7, 7)
+T = TypeVar("T")
 
 
-def pitch_from_note_and_octave(note: str, octave: int) -> Pitch:
-    index = ['c', 'd', 'e', 'f', 'g', 'a', 'b'].index(note.lower())
-    assert index >= 0, f"Invalid note name: {note}, expected [A-Za-z]."
-    return Pitch((octave, 1+index))
+class Handler(ABC, Generic[T]):
+
+    @abstractmethod
+    def open_spine(self) -> T:
+        pass
+
+    @abstractmethod
+    def close_spine(self, spine: T):
+        pass
+
+    @abstractmethod
+    def branch_spine(self, source: T) -> T:
+        pass
+
+    @abstractmethod
+    def merge_spines(self, source: T, into: T):
+        pass
+
+    @abstractmethod
+    def append(self, spine: T, token: Symbol):
+        pass
 
 
-CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
-
-
-def pitch_from_clef(clef: str) -> Pitch:
-    m = CLEF_RE.match(clef)
-    assert m is not None, "Invalid clef specification."
-    name = m.group(1)
-    octave = int(m.group(2))
-    return pitch_from_note_and_octave(name, octave)
-
-
-@dataclass
-class Symbol:
-    pass
-
-
-@dataclass
-class Clef(Symbol):
-    pitch: Pitch
-
-
-@dataclass
-class Key(Symbol):
-    is_flats: bool
-    count: int
-
-
-@dataclass
-class Meter(Symbol):
-    numerator: int
-    denominator: int
-
-
-@dataclass
-class Bar(Symbol):
-    symbol: str
-
-
-@dataclass
-class Null(Symbol):
-    pass
-
-
-@dataclass
-class Rest(Symbol):
-    duration: int
-
-
-@dataclass
-class Note(Symbol):
-    pitch: Pitch
-    duration: int
-    flats: int
-    sharps: int
-    starts_legato: bool
-    ends_legato: bool
-    starts_beam: bool
-    ends_beam: bool
-    is_gracenote: bool
-
-
-@dataclass
-class Chord(Symbol):
-    notes: List[Note]
-
-
-class Spine:
-    name: str
-    tokens: List[Symbol] = list([])
-    parent: Optional[Tuple['Spine', int]]
-
-    def __init__(self, parent: Optional['Spine'] = None):
-        if parent is not None:
-            self.parent = (parent, len(parent.tokens))
-
-    def append(self, token: Symbol):
-        self.tokens.append(token)
-
-    def rename(self, name: str):
-        self.name = name
-
-
-class HumdrumParser:
+class Parser(Generic[T]):
 
     path: Union[str, Path]
     records: Iterator[str]
     lineno: int = 0
     verbose: bool = False
 
-    spines: List[Spine]
+    spines: List[T]
+    handler: Handler[T]
 
-    def __init__(self, path: Union[str, Path], records: Iterable[str]):
+    def __init__(self, path: Union[str, Path], records: Iterable[str], handler: Handler[T]):
         self.path = path
         self.records = iter(records)
+        self.handler = handler
         self.spines = list([])
 
     @staticmethod
-    def from_file(path: Union[str, Path]) -> 'HumdrumParser':
-        return HumdrumParser(path, iterable_from_file(path))
+    def from_file(path: Union[str, Path], handler: Handler[T]) -> 'Parser':
+        return Parser(path, iterable_from_file(path), handler)
 
     @staticmethod
-    def from_text(text: str) -> 'HumdrumParser':
-        return HumdrumParser("text", iter(text.split("\n")))
+    def from_text(text: str, handler: Handler[T]) -> 'Parser':
+        return Parser("text", iter(text.split("\n")), handler)
 
     @staticmethod
-    def from_iterator(iterator: Iterable[str]) -> 'HumdrumParser':
-        return HumdrumParser("iterator", iterator)
+    def from_iterator(iterator: Iterable[str], handler: Handler[T]) -> 'Parser':
+        return Parser("iterator", iterator, handler)
 
     def error(self, msg: str):
         raise ValueError(f"{self.path}, {self.lineno}: {msg}")
@@ -224,61 +123,76 @@ class HumdrumParser:
                 duration += len(dots)   # TODO Fix this duration computation
         else:
             assert "q" in additional, "Gracenotes expected without duration."
+
+        # https://www.humdrum.org/Humdrum/representations/kern.html
+        # 3.5 Editorial signifiers: XxYy not handled.
+        for x in r'TtMmWwS$R\'/\\Q"`~^':
+            if x in token:
+                print(token)
+
         return Note(
             pitch=Pitch[m.group(3)],
             duration=duration,
-            flats=token.count("#"),
-            sharps=token.count("-"),
-            starts_legato="[" in token,
-            ends_legato="]" in token,
-            starts_beam="J" in token,
-            ends_beam="L" in token,
+            flats=token.count("-"),
+            sharps=token.count("#"),
+            starts_tie="[" in token,
+            ends_tie="]" in token,
+            starts_beam=token.count("L"),
+            ends_beam=token.count("J"),
             is_gracenote="q" in token,
+            has_left_beam="k" in token,
+            has_right_beam="K" in token,
         )
 
-    def position(self, spine: Spine) -> int:
+    def position(self, spine: T) -> int:
         if (pos := self.spines.index(spine)) < 0:
             self.error(f"Spine {spine} missing.")
         return pos
 
-    def close_spine(self, spine: Spine):
+    def insert_spine(self, at: int, spine: T):
+        # Copying is required as these are called from within self.spines iterators.
+        spines = list(self.spines)
+        spines.insert(at, spine)
+        self.spines = spines
+
+    def open_spine(self, at: int) -> T:
+        spine = self.handler.open_spine()
+        self.insert_spine(at, spine)
+        return spine
+
+    def close_spine(self, spine: T):
+        self.handler.close_spine(spine)
         # Copying is required as these are called from within self.spines iterators.
         spines = list(self.spines)
         spines.remove(spine)
         self.spines = spines
 
-    def open_spine(self, at: int, spine: Spine) -> Spine:
-        # Copying is required as these are called from within self.spines iterators.
-        spines = list(self.spines)
-        spines.insert(at, spine)
-        self.spines = spines
-        return spine
-
-    def branch_spine(self, source: Spine) -> Spine:
-        branch = Spine(source)
-        self.open_spine(self.position(source), branch)
+    def branch_spine(self, source: T) -> T:
+        branch = self.handler.branch_spine(source)
+        self.insert_spine(self.position(source), branch)
         return branch
 
-    def merge_spines(self, into: Spine, other: Spine):
-        self.close_spine(other)
+    def merge_spines(self, source: T, into: T):
+        self.handler.merge_spines(source, into)
+        self.close_spine(source)
 
     INDICATOR_RE = re.compile(r'^\*([\w+]*)$')
 
     def parse_spine_indicator(
         self, spine, indicator: str,
-        tokens_iterator: Iterator[Tuple[Spine, str]]
+        tokens_iterator: Iterator[Tuple[T, str]]
     ):
         if indicator == '*-':
             self.close_spine(spine)
         elif indicator == '*+':
-            self.open_spine(self.position(spine), Spine())
+            self.open_spine(self.position(spine))
         elif indicator == '*^':
             # Branch off into a new spine.
             self.branch_spine(spine)
         elif indicator == '*v':
             for next_spine, next_token in tokens_iterator:
                 if spine and next_token == "*v":
-                    self.merge_spines(spine, next_spine)
+                    self.merge_spines(next_spine, spine)
                 elif next_token == "*":
                     # No more merges allowed.
                     spine = None
@@ -296,16 +210,17 @@ class HumdrumParser:
     REST_RE = re.compile(r'^([0-9]+)(\.*)r$')
     BAR_RE = re.compile(r'^=+.*$')
 
-    def parse_event(self, spine: Spine, symbol: str,
-                    tokens_iterator: Iterator[Tuple[Spine, str]]):
+    def parse_event(self, spine: T, symbol: str,
+                    tokens_iterator: Iterator[Tuple[T, str]]):
         if self.BAR_RE.match(symbol):
-            spine.append(Bar(symbol))
+            self.handler.append(spine, Bar(symbol))
         elif symbol == '.':
-            spine.append(Null())
+            self.handler.append(spine, Null())
         elif symbol.startswith("!"):
+            # A comment.
             pass
         elif (m := self.REST_RE.match(symbol)):
-            spine.append(Rest(int(m.group(1))))
+            self.handler.append(spine, Rest(int(m.group(1))))
         elif symbol.startswith("*"):
             self.parse_spine_indicator(spine, symbol, tokens_iterator)
         else:
@@ -313,9 +228,9 @@ class HumdrumParser:
             for note in symbol.split():
                 notes.append(self.parse_note(note))
             if len(notes) == 1:
-                spine.append(notes[0])
+                self.handler.append(spine, notes[0])
             else:
-                spine.append(Chord(notes))
+                self.handler.append(spine, Chord(notes))
 
     CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
     SIGNATURE_RE = re.compile(r'\*k\[(([a-z][#-])*)\]')
@@ -334,26 +249,26 @@ class HumdrumParser:
             tokens_iterator = zip(self.spines, tokens)
             for spine, symbol in tokens_iterator:
                 if (m := self.CLEF_RE.match(symbol)):
-                    spine.append(Clef(pitch_from_note_and_octave(
+                    self.handler.append(spine, Clef(pitch_from_note_and_octave(
                         m.group(1), int(m.group(2)))))
                 elif (m := self.SIGNATURE_RE.match(symbol)):
                     # Empty key signature is allowed.
                     if (accidental := m.group(1)):
                         # TODO Check that accidental is really valid as the RE isn't prefect.
-                        spine.append(Key(
+                        self.handler.append(spine, Key(
                             is_flats=(accidental[-1] == '-'),
                             count=len(accidental) // 2
                         ))
                 elif (m := self.METER_RE.match(symbol)):
-                    spine.append(Meter(
+                    self.handler.append(spine, Meter(
                         int(m.group(1)),
                         int(m.group(2))
                     ))
                 elif (m := self.METRICAL_RE.match(symbol)):
                     if m.group(1).upper() == 'C':
-                        spine.append(Meter(4, 4))
+                        self.handler.append(spine, Meter(4, 4))
                     elif m.group(1) == "C|":
-                        spine.append(Meter(2, 2))
+                        self.handler.append(spine, Meter(2, 2))
                 else:
                     self.parse_event(spine, symbol, tokens_iterator)
 
@@ -362,37 +277,4 @@ class HumdrumParser:
         for kern in kerns:
             if kern != "**kern":
                 self.error(f"Expected a **kern symbol, got '{kern}'.")
-            self.spines.append(Spine())
-
-
-DATADIR = Path(
-    "/home/anselm/Downloads/GrandPiano/")
-
-
-def parse_one(path: Path) -> bool:
-    try:
-        h = HumdrumParser.from_file(path)
-        h.parse()
-        return True
-    except Exception as e:
-        print(f"{path.name}: {e}")
-        return False
-
-
-def parse_all():
-    parsed, failed = 0, 0
-    for root, _, filenames in os.walk(DATADIR):
-        for filename in filenames:
-            path = Path(root) / filename
-            # if filename.name == "min3_down_m-0-4.krn":
-            if path.suffix == '.krn' and not path.name.startswith("."):
-                parsed += 1
-                if not parse_one(path):
-                    failed += 1
-    print(f"Parsed {parsed} files, {failed} failed.")
-
-
-if __name__ == '__main__':
-    parse_all()
-    # parse_one(
-    #     Path('/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata26-2/maj2_down_m-1-6.krn'))
+            self.spines.append(self.handler.open_spine())
