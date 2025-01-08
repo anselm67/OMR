@@ -1,7 +1,7 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import List
+from typing import List, Optional
 
 
 class Pitch(Enum):
@@ -88,6 +88,12 @@ def pitch_from_clef(clef: str) -> Pitch:
 
 
 @dataclass
+class Duration:
+    duration: int
+    dots: int = 0
+
+
+@dataclass
 class Token:
     pass
 
@@ -127,7 +133,7 @@ class Rest(Token):
 @dataclass
 class Note(Token):
     pitch: Pitch
-    duration: int
+    duration: Optional[Duration]        # May be None e.g. for gracenotes
     flats: int = 0
     sharps: int = 0
     starts_tie: bool = False

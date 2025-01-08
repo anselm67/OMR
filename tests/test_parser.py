@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import Mock, call
 
 from kern.parser import Handler, Parser
-from kern.typing import Note, Pitch, Token
+from kern.typing import Duration, Note, Pitch, Token
 
 
 class EmptySpine:
@@ -88,29 +88,34 @@ class TestHumdrumParser(unittest.TestCase):
         handler_instance.append.assert_has_calls([call(
             handler_instance.open_spine.return_value, Note(
                 pitch=Pitch.A,
-                duration=8
+                duration=Duration(8)
             ))])
 
     def test_some_tokens(self):
         self.parse_one_token("8A\n", Note(
             pitch=Pitch.A,
-            duration=8
+            duration=Duration(8)
         ))
         self.parse_one_token("8A-\n", Note(
             pitch=Pitch.A,
-            duration=8,
+            duration=Duration(8),
             flats=1,
         ))
         self.parse_one_token("8A##LL\n", Note(
             pitch=Pitch.A,
-            duration=8,
+            duration=Duration(8),
             sharps=2,
             starts_beam=2
         ))
-        self.parse_one_token("8A##\n", Note(
+
+    def test_note_duration(self):
+        self.parse_one_token("8.A\n", Note(
             pitch=Pitch.A,
-            duration=8,
-            sharps=2,
+            duration=Duration(8, 1),
+        ))
+        self.parse_one_token("16..A\n", Note(
+            pitch=Pitch.A,
+            duration=Duration(16, 2),
         ))
 
 

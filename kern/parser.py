@@ -24,6 +24,7 @@ from kern.typing import (
     Bar,
     Chord,
     Clef,
+    Duration,
     Key,
     Meter,
     Note,
@@ -116,11 +117,9 @@ class Parser(Generic[T]):
         if m.group(3) not in Pitch.__members__:
             self.error(f"Unknown pitch '{m.group(3)}'.")
         # Computes duration with optional dots
-        duration = -1
+        duration = None
         if m.group(1):
-            duration = int(m.group(1))
-            if (dots := m.group(2)):
-                duration += len(dots)   # TODO Fix this duration computation
+            duration = Duration(int(m.group(1)), len(m.group(2)))
         else:
             assert "q" in additional, "Gracenotes expected without duration."
 
