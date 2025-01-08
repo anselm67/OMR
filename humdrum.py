@@ -5,7 +5,9 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, TextIO, Union, cast
+from typing import Iterable, Iterator, List, Optional, Tuple, Union, cast
+
+from utils import iterable_from_file
 
 
 class Pitch(Enum):
@@ -146,20 +148,47 @@ class Chord(Symbol):
     notes: List[Note]
 
 
+class Spine:
+    name: str
+    tokens: List[Symbol] = list([])
+    parent: Optional[Tuple['Spine', int]]
+
+    def __init__(self, parent: Optional['Spine'] = None):
+        if parent is not None:
+            self.parent = (parent, len(parent.tokens))
+
+    def append(self, token: Symbol):
+        self.tokens.append(token)
+
+    def rename(self, name: str):
+        self.name = name
+
+
 class HumdrumParser:
 
     path: Union[str, Path]
-    file: TextIO
+    records: Iterator[str]
     lineno: int = 0
     verbose: bool = False
 
-    spines: Dict[str, List[Symbol]] = {}
+    spines: List[Spine]
 
-    def __init__(self, path: Union[str, Path]):
-        if not Path(path).exists():
-            raise FileNotFoundError(f"Can't open file {path}")
+    def __init__(self, path: Union[str, Path], records: Iterable[str]):
         self.path = path
-        self.file = open(self.path, 'r')
+        self.records = iter(records)
+        self.spines = list([])
+
+    @staticmethod
+    def from_file(path: Union[str, Path]) -> 'HumdrumParser':
+        return HumdrumParser(path, iterable_from_file(path))
+
+    @staticmethod
+    def from_text(text: str) -> 'HumdrumParser':
+        return HumdrumParser("text", iter(text.split("\n")))
+
+    @staticmethod
+    def from_iterator(iterator: Iterable[str]) -> 'HumdrumParser':
+        return HumdrumParser("iterator", iterator)
 
     def error(self, msg: str):
         raise ValueError(f"{self.path}, {self.lineno}: {msg}")
@@ -168,17 +197,15 @@ class HumdrumParser:
 
     def next(self, throw_on_end: bool = False) -> Optional[str]:
         while True:
-            line = self.file.readline().strip()
+            line = next(self.records, None)
             self.lineno += 1
-            if line is None:
+            if not line:
                 if throw_on_end:
                     self.error("Unexpected end of file.")
-            if line is None or not self.COMMENT_RE.match(line):
+                return None
+            line = line.strip()
+            if not self.COMMENT_RE.match(line):
                 return line
-
-    def end(self):
-        symbol = self.next()
-        assert not symbol, f"Unexpected symbol '{symbol}' after spine end."
 
     NOTE_RE = re.compile(r'^([\d]+)?(\.*)?([a-gA-G]+)(.*)$')
 
@@ -209,10 +236,63 @@ class HumdrumParser:
             is_gracenote="q" in token,
         )
 
+    def position(self, spine: Spine) -> int:
+        if (pos := self.spines.index(spine)) < 0:
+            self.error(f"Spine {spine} missing.")
+        return pos
+
+    def close_spine(self, spine: Spine):
+        # Copying is required as these are called from within self.spines iterators.
+        spines = list(self.spines)
+        spines.remove(spine)
+        self.spines = spines
+
+    def open_spine(self, at: int, spine: Spine) -> Spine:
+        # Copying is required as these are called from within self.spines iterators.
+        spines = list(self.spines)
+        spines.insert(at, spine)
+        self.spines = spines
+        return spine
+
+    def merge_spines(self, into: Spine, other: Spine):
+        self.close_spine(other)
+
+    INDICATOR_RE = re.compile(r'^\*([\w+]*)$')
+
+    def parse_spine_indicator(
+        self, spine, indicator: str,
+        tokens_iterator: Iterator[Tuple[Spine, str]]
+    ):
+        if indicator == '*-':
+            self.close_spine(spine)
+        elif indicator == '*+':
+            pass
+        elif indicator == '*^':
+            # Branch off into a new spine.
+            self.open_spine(self.position(spine), Spine(spine))
+        elif indicator == '*v':
+            for next_spine, next_token in tokens_iterator:
+                if spine and next_token == "*v":
+                    self.merge_spines(spine, next_spine)
+                elif next_token == "*":
+                    # No more merges allowed.
+                    spine = None
+                else:
+                    self.error(f"Invalid spine merge '{next_token}'")
+        elif indicator == '*x':
+            self.error("Spine exchange not implemented.")
+        elif (m := self.INDICATOR_RE.match(indicator)):
+            # Noop spine indicator.
+            if (indicator := m.group(1)):
+                spine.rename(indicator)
+        else:
+            self.error(f"Unknown spine indicator '{indicator}'.")
+
     REST_RE = re.compile(r'^([0-9]+)(\.*)r$')
     BAR_RE = re.compile(r'^=+.*$')
 
-    def parse_event(self, spine: List[Symbol], symbol: str):
+    def parse_event(self, spine: Spine, symbol: str,
+                    tokens_iterator: Iterator[Tuple[Spine, str]]):
         if self.BAR_RE.match(symbol):
             spine.append(Bar(symbol))
         elif symbol == '.':
@@ -222,8 +302,7 @@ class HumdrumParser:
         elif (m := self.REST_RE.match(symbol)):
             spine.append(Rest(int(m.group(1))))
         elif symbol.startswith("*"):
-            # TODO Hanldle spline commands.
-            pass
+            self.parse_spine_indicator(spine, symbol, tokens_iterator)
         else:
             notes = list([])
             for note in symbol.split():
@@ -235,14 +314,20 @@ class HumdrumParser:
 
     CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
     SIGNATURE_RE = re.compile(r'\*k\[(([a-z][#-])*)\]')
-    METER_RE = re.compile(r'^\*M(\d)/(\d)$')
-    METRICAL_RE = re.compile(r'^\*met\((C\|?)\)$')
+    METER_RE = re.compile(r'^\*M(\d+)/(\d+)$')
+    METRICAL_RE = re.compile(r'^\*met\(([cC]\|?)\)$')
 
     def parse(self):
         self.header()
         while True:
-            line = cast(str, self.next(throw_on_end=True))
-            for spine, symbol in zip(self.spines.values(), line.split("\t")):
+            line = cast(str, self.next())
+            if not line:
+                return
+            tokens = line.split("\t")
+            if len(tokens) != len(self.spines):
+                self.error(f"Got {len(tokens)} for {len(self.spines)} spines.")
+            tokens_iterator = zip(self.spines, tokens)
+            for spine, symbol in tokens_iterator:
                 if (m := self.CLEF_RE.match(symbol)):
                     spine.append(Clef(pitch_from_note_and_octave(
                         m.group(1), int(m.group(2)))))
@@ -260,26 +345,33 @@ class HumdrumParser:
                         int(m.group(2))
                     ))
                 elif (m := self.METRICAL_RE.match(symbol)):
-                    if m.group(1) == 'C':
+                    if m.group(1).upper() == 'C':
                         spine.append(Meter(4, 4))
                     elif m.group(1) == "C|":
                         spine.append(Meter(2, 2))
-                elif (symbol == '*-'):
-                    self.end()
-                    return
                 else:
-                    self.parse_event(spine, symbol)
+                    self.parse_event(spine, symbol, tokens_iterator)
 
     def header(self):
         kerns = self.next(throw_on_end=True).split()    # type: ignore
-        for idx, kern in enumerate(kerns):
+        for kern in kerns:
             if kern != "**kern":
-                self.error("Expeced a **kern symbol.")
-            self.spines[f"spine-{idx+1}"] = list([])
+                self.error(f"Expected a **kern symbol, got '{kern}'.")
+            self.spines.append(Spine())
 
 
 DATADIR = Path(
-    "/home/anselm/Downloads/GrandPiano/chopin/preludes")
+    "/home/anselm/Downloads/GrandPiano/")
+
+
+def parse_one(path: Path) -> bool:
+    try:
+        h = HumdrumParser.from_file(path)
+        h.parse()
+        return True
+    except Exception as e:
+        print(f"{path.name}: {e}")
+        return False
 
 
 def parse_all():
@@ -288,15 +380,14 @@ def parse_all():
         for filename in filenames:
             path = Path(root) / filename
             # if filename.name == "min3_down_m-0-4.krn":
-            if path.suffix == '.krn':
-                try:
-                    parsed += 1
-                    h = HumdrumParser(path)
-                    h.parse()
-                except Exception as e:
+            if path.suffix == '.krn' and not path.name.startswith("."):
+                parsed += 1
+                if not parse_one(path):
                     failed += 1
-                    print(f"{path.name}: {e}")
     print(f"Parsed {parsed} files, {failed} failed.")
 
 
-parse_all()
+if __name__ == '__main__':
+    parse_all()
+    # parse_one(
+    #     Path('/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata26-2/maj2_down_m-1-6.krn'))
