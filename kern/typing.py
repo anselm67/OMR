@@ -88,44 +88,44 @@ def pitch_from_clef(clef: str) -> Pitch:
 
 
 @dataclass
-class Symbol:
+class Token:
     pass
 
 
 @dataclass
-class Clef(Symbol):
+class Clef(Token):
     pitch: Pitch
 
 
 @dataclass
-class Key(Symbol):
+class Key(Token):
     is_flats: bool
     count: int
 
 
 @dataclass
-class Meter(Symbol):
+class Meter(Token):
     numerator: int
     denominator: int
 
 
 @dataclass
-class Bar(Symbol):
+class Bar(Token):
     symbol: str
 
 
 @dataclass
-class Null(Symbol):
+class Null(Token):
     pass
 
 
 @dataclass
-class Rest(Symbol):
+class Rest(Token):
     duration: int
 
 
 @dataclass
-class Note(Symbol):
+class Note(Token):
     pitch: Pitch
     duration: int
     flats: int = 0
@@ -140,5 +140,5 @@ class Note(Symbol):
 
 
 @dataclass
-class Chord(Symbol):
+class Chord(Token):
     notes: List[Note]

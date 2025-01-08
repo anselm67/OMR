@@ -4,20 +4,20 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from kern.humdrum import Handler, Parser
-from kern.typing import Symbol
+from kern.parser import Handler, Parser
+from kern.typing import Token
 
 
 class Spine:
     name: str
-    tokens: List[Symbol] = list([])
+    tokens: List[Token] = list([])
     parent: Optional[Tuple['Spine', int]]
 
     def __init__(self, parent: Optional['Spine'] = None):
         if parent is not None:
             self.parent = (parent, len(parent.tokens))
 
-    def append(self, token: Symbol):
+    def append(self, token: Token):
         self.tokens.append(token)
 
     def rename(self, name: str):
@@ -42,7 +42,7 @@ class NormHandler(Handler[Spine]):
     def merge_spines(self, source: Spine, into: Spine):
         pass
 
-    def append(self, spine: Spine, token: Symbol):
+    def append(self, spine: Spine, token: Token):
         spine.append(token)
 
 

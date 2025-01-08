@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import Mock, call
 
-from kern.humdrum import Handler, Parser
-from kern.typing import Note, Pitch, Symbol
+from kern.parser import Handler, Parser
+from kern.typing import Note, Pitch, Token
 
 
 class EmptySpine:
@@ -23,7 +23,7 @@ class EmptyHandler(Handler[EmptySpine()]):
     def merge_spines(self, source: EmptySpine, into: EmptySpine):
         pass
 
-    def append(self, spine: EmptySpine, token: Symbol):
+    def append(self, spine: EmptySpine, token: Token):
         pass
 
 
@@ -38,7 +38,7 @@ class TestHumdrumParser(unittest.TestCase):
         with self.assertRaises(ValueError):
             parser.parse()
 
-    def test_one_token(self, text: str, expected_token: Symbol):
+    def parse_one_token(self, text: str, expected_token: Token):
         mock_handler = Mock()
         handler_instance = mock_handler.return_value
         parser = Parser.from_text(
@@ -92,22 +92,22 @@ class TestHumdrumParser(unittest.TestCase):
             ))])
 
     def test_some_tokens(self):
-        self.test_one_token("8A\n", Note(
+        self.parse_one_token("8A\n", Note(
             pitch=Pitch.A,
             duration=8
         ))
-        self.test_one_token("8A-\n", Note(
+        self.parse_one_token("8A-\n", Note(
             pitch=Pitch.A,
             duration=8,
             flats=1,
         ))
-        self.test_one_token("8A##LL\n", Note(
+        self.parse_one_token("8A##LL\n", Note(
             pitch=Pitch.A,
             duration=8,
             sharps=2,
             starts_beam=2
         ))
-        self.test_one_token("8A##\n", Note(
+        self.parse_one_token("8A##\n", Note(
             pitch=Pitch.A,
             duration=8,
             sharps=2,

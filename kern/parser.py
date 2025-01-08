@@ -30,7 +30,7 @@ from kern.typing import (
     Null,
     Pitch,
     Rest,
-    Symbol,
+    Token,
     pitch_from_note_and_octave,
 )
 from utils import iterable_from_file
@@ -57,7 +57,7 @@ class Handler(ABC, Generic[T]):
         pass
 
     @abstractmethod
-    def append(self, spine: T, token: Symbol):
+    def append(self, spine: T, token: Token):
         pass
 
 
