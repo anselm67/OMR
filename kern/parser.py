@@ -21,13 +21,15 @@ from kern.typing import (
     Bar,
     Chord,
     Clef,
+    Comment,
+    Continue,
     Duration,
     Key,
     Meter,
     Note,
-    Null,
     Pitch,
     Rest,
+    SpinePath,
     Token,
     pitch_from_note_and_octave,
 )
@@ -36,30 +38,33 @@ from utils import iterable_from_file
 T = TypeVar("T")
 
 
-class Handler(ABC, Generic[T]):
-
-    @abstractmethod
-    def open_spine(self) -> T:
-        pass
-
-    @abstractmethod
-    def close_spine(self, spine: T):
-        pass
-
-    @abstractmethod
-    def branch_spine(self, source: T) -> T:
-        pass
-
-    @abstractmethod
-    def merge_spines(self, source: T, into: T):
-        pass
-
-    @abstractmethod
-    def append(self, spine: T, token: Token):
-        pass
-
-
 class Parser(Generic[T]):
+
+    class Handler(ABC):
+
+        @abstractmethod
+        def open_spine(self) -> T:
+            pass
+
+        @abstractmethod
+        def close_spine(self, spine: T):
+            pass
+
+        @abstractmethod
+        def branch_spine(self, source: T) -> T:
+            pass
+
+        @abstractmethod
+        def merge_spines(self, source: T, into: T):
+            pass
+
+        @abstractmethod
+        def rename_spine(self, spine: T, name: str):
+            pass
+
+        @abstractmethod
+        def append(self, tokens: List[Tuple[T, Token]]):
+            pass
 
     path: Union[str, Path]
     records: Iterator[str]
@@ -67,24 +72,24 @@ class Parser(Generic[T]):
     verbose: bool = False
 
     spines: List[T]
-    handler: Handler[T]
+    handler: Handler
 
-    def __init__(self, path: Union[str, Path], records: Iterable[str], handler: Handler[T]):
+    def __init__(self, path: Union[str, Path], records: Iterable[str], handler: Handler):
         self.path = path
         self.records = iter(records)
         self.handler = handler
         self.spines = list([])
 
     @staticmethod
-    def from_file(path: Union[str, Path], handler: Handler[T]) -> 'Parser':
+    def from_file(path: Union[str, Path], handler: Handler) -> 'Parser':
         return Parser(path, iterable_from_file(path), handler)
 
     @staticmethod
-    def from_text(text: str, handler: Handler[T]) -> 'Parser':
+    def from_text(text: str, handler: Handler) -> 'Parser':
         return Parser("text", iter(text.split("\n")), handler)
 
     @staticmethod
-    def from_iterator(iterator: Iterable[str], handler: Handler[T]) -> 'Parser':
+    def from_iterator(iterator: Iterable[str], handler: Handler) -> 'Parser':
         return Parser("iterator", iterator, handler)
 
     def error(self, msg: str):
@@ -122,7 +127,7 @@ class Parser(Generic[T]):
 
         # https://www.humdrum.org/Humdrum/representations/kern.html
         # 3.5 Editorial signifiers: XxYy not handled.
-        for x in r'TtMmWwS$R\'/\\Q"`~^':
+        for x in r'TtMmWwsS$R\'/\\Q"`~^':
             if x in token:
                 print(token)
 
@@ -177,7 +182,7 @@ class Parser(Generic[T]):
     def parse_spine_indicator(
         self, spine, indicator: str,
         tokens_iterator: Iterator[Tuple[T, str]]
-    ):
+    ) -> Token:
         if indicator == '*-':
             self.close_spine(spine)
         elif indicator == '*+':
@@ -199,39 +204,70 @@ class Parser(Generic[T]):
         elif (m := self.INDICATOR_RE.match(indicator)):
             # Noop spine indicator.
             if (indicator := m.group(1)):
-                spine.rename(indicator)
+                self.handler.rename_spine(spine, indicator)
         else:
             self.error(f"Unknown spine indicator '{indicator}'.")
+        return SpinePath(indicator)
 
-    REST_RE = re.compile(r'^([0-9]+)(\.*)r$')
+    REST_RE = re.compile(r'^([\d]+)?(\.*)(\.*)r$')
     BAR_RE = re.compile(r'^=+.*$')
 
-    def parse_event(self, spine: T, symbol: str,
-                    tokens_iterator: Iterator[Tuple[T, str]]):
-        if self.BAR_RE.match(symbol):
-            self.handler.append(spine, Bar(symbol))
-        elif symbol == '.':
-            self.handler.append(spine, Null())
-        elif symbol.startswith("!"):
-            # A comment.
-            pass
-        elif (m := self.REST_RE.match(symbol)):
-            self.handler.append(spine, Rest(int(m.group(1))))
-        elif symbol.startswith("*"):
-            self.parse_spine_indicator(spine, symbol, tokens_iterator)
+    def parse_event(self, spine: T, text: str,
+                    tokens_iterator: Iterator[Tuple[T, str]]) -> Token:
+        if self.BAR_RE.match(text):
+            return Bar(text)
+        elif text == '.':
+            return Continue()
+        elif text.startswith("!"):
+            # A comment, we don't .
+            return Comment(text)
+        elif (m := self.REST_RE.match(text)):
+            return Rest(Duration(int(m.group(1)), len(m.group(2))))
+        elif text.startswith("*"):
+            return self.parse_spine_indicator(spine, text, tokens_iterator)
         else:
             notes = list([])
-            for note in symbol.split():
+            for note in text.split():
                 notes.append(self.parse_note(note))
             if len(notes) == 1:
-                self.handler.append(spine, notes[0])
+                return notes[0]
             else:
-                self.handler.append(spine, Chord(notes))
+                return Chord(notes)
 
     CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
     SIGNATURE_RE = re.compile(r'\*k\[(([a-z][#-])*)\]')
     METER_RE = re.compile(r'^\*M(\d+)/(\d+)$')
     METRICAL_RE = re.compile(r'^\*met\(([cC]\|?)\)$')
+
+    def parse_token(self, spine: T, text: str, iterator: Iterator[Tuple[T, str]]) -> Token:
+        if (m := self.CLEF_RE.match(text)):
+            return Clef(pitch_from_note_and_octave(m.group(1), int(m.group(2))))
+        elif (m := self.SIGNATURE_RE.match(text)):
+            # Empty key signature is allowed.
+            if (accidental := m.group(1)):
+                # TODO Check that accidental is really valid as the RE isn't prefect.
+                return Key(
+                    is_flats=(accidental[-1] == '-'),
+                    count=len(accidental) // 2
+                )
+            else:
+                # Empty key signatures are ok.
+                return Key(False, 0)
+        elif (m := self.METER_RE.match(text)):
+            return Meter(
+                int(m.group(1)),
+                int(m.group(2))
+            )
+        elif (m := self.METRICAL_RE.match(text)):
+            metric = m.group(1).upper()
+            if metric == 'C':
+                return Meter(4, 4)
+            elif metric == "C|":
+                return Meter(2, 2)
+            else:
+                self.error(f"Invalid metric '{metric}'.")
+        else:
+            return self.parse_event(spine, text, iterator)
 
     def parse(self):
         self.header()
@@ -243,30 +279,10 @@ class Parser(Generic[T]):
             if len(tokens) != len(self.spines):
                 self.error(f"Got {len(tokens)} for {len(self.spines)} spines.")
             tokens_iterator = zip(self.spines, tokens)
-            for spine, symbol in tokens_iterator:
-                if (m := self.CLEF_RE.match(symbol)):
-                    self.handler.append(spine, Clef(pitch_from_note_and_octave(
-                        m.group(1), int(m.group(2)))))
-                elif (m := self.SIGNATURE_RE.match(symbol)):
-                    # Empty key signature is allowed.
-                    if (accidental := m.group(1)):
-                        # TODO Check that accidental is really valid as the RE isn't prefect.
-                        self.handler.append(spine, Key(
-                            is_flats=(accidental[-1] == '-'),
-                            count=len(accidental) // 2
-                        ))
-                elif (m := self.METER_RE.match(symbol)):
-                    self.handler.append(spine, Meter(
-                        int(m.group(1)),
-                        int(m.group(2))
-                    ))
-                elif (m := self.METRICAL_RE.match(symbol)):
-                    if m.group(1).upper() == 'C':
-                        self.handler.append(spine, Meter(4, 4))
-                    elif m.group(1) == "C|":
-                        self.handler.append(spine, Meter(2, 2))
-                else:
-                    self.parse_event(spine, symbol, tokens_iterator)
+            self.handler.append([
+                (spine, self.parse_token(spine, text, tokens_iterator))
+                for spine, text in tokens_iterator
+            ])
 
     def header(self):
         kerns = self.next(throw_on_end=True).split()    # type: ignore

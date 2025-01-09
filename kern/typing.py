@@ -121,13 +121,23 @@ class Bar(Token):
 
 
 @dataclass
-class Null(Token):
+class Continue(Token):
     pass
 
 
 @dataclass
+class Comment(Token):
+    text: str
+
+
+@dataclass
+class SpinePath(Token):
+    indicator: str
+
+
+@dataclass
 class Rest(Token):
-    duration: int
+    duration: Duration
 
 
 @dataclass

@@ -1,15 +1,15 @@
 import unittest
 from unittest.mock import Mock, call
 
-from kern.parser import Handler, Parser
-from kern.typing import Duration, Note, Pitch, Token
+from kern.parser import Parser
+from kern.typing import Duration, Note, Pitch, Rest, Token
 
 
 class EmptySpine:
     pass
 
 
-class EmptyHandler(Handler[EmptySpine()]):
+class EmptyHandler(Parser[EmptySpine].Handler):
 
     def open_spine(self) -> EmptySpine:
         return EmptySpine()
@@ -21,6 +21,9 @@ class EmptyHandler(Handler[EmptySpine()]):
         return EmptySpine()
 
     def merge_spines(self, source: EmptySpine, into: EmptySpine):
+        pass
+
+    def rename_spine(self, spine: EmptySpine, name: str):
         pass
 
     def append(self, spine: EmptySpine, token: Token):
@@ -115,6 +118,14 @@ class TestHumdrumParser(unittest.TestCase):
         ))
         self.parse_one_token("16..A\n", Note(
             pitch=Pitch.A,
+            duration=Duration(16, 2),
+        ))
+
+    def test_rest_duration(self):
+        self.parse_one_token("8r\n", Rest(
+            duration=Duration(8, 1),
+        ))
+        self.parse_one_token("16..r\n", Rest(
             duration=Duration(16, 2),
         ))
 
