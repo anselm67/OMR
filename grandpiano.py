@@ -8,6 +8,7 @@ from typing import Dict, List
 import click
 import torch
 import torch.nn.functional as F
+from torchvision.io import decode_image
 
 
 class GrandPiano:
@@ -81,16 +82,38 @@ class GrandPiano:
         print(f"{token_count:,} tokens, {len(self.tok2i):,} uniques.")
 
     def load_sequence(self, path: Path) -> torch.Tensor:
-        tensor = torch.empty((1, self.CHORD_MAX), dtype=torch.int)
         with open(path, "r") as file:
-            for line in file:
-                chord = torch.Tensor([
-                    self.tok2i.get(tok, self.UNK[0])for tok in line.strip().split()
+            records = list(file)
+            tensor = torch.full((len(records), self.CHORD_MAX), self.PAD[0])
+            for idx, record in enumerate(records):
+                row = torch.Tensor([
+                    self.tok2i.get(tok, self.UNK[0])for tok in record.strip().split()
                 ])
-                chord = F.pad(chord, (0, self.CHORD_MAX -
-                              chord.shape[0]), value=self.PAD[0])
-                tensor = torch.cat((tensor, chord.unsqueeze(0)), dim=0)
+                tensor[idx, :len(row)] = row
         return tensor
+
+    def load_image(self, path: Path) -> torch.Tensor:
+        tensor = decode_image(Path(path).as_posix())
+        return tensor
+
+    def sequence_sizes(self) -> Dict[str, int]:
+        return {
+            "min size": 0,
+            "max size": 100
+        }
+
+    def image_sizes(self) -> Dict[str, int]:
+        return {
+            "max height": 256,
+
+        }
+
+    def stats(self):
+        sequence_length = self.sequence_sizes()
+        return {
+            "dataset size": len(self.data),
+            "vocab size": len(self.tok2i)
+        } | self.sequence_sizes() | self.image_sizes()
 
 
 @click.command
@@ -110,7 +133,8 @@ def stats(ctx):
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
     """
     gp = ctx.obj
-    print(f"{len(gp.data):,} samples, {len(gp.tok2i):,} tokens.")
+    for key, value in gp.stats().items():
+        print(f"{key}: {value:,}")
 
 
 @click.command
@@ -125,10 +149,14 @@ def load(ctx, path: Path):
         PATH can be either .tokens or a .jpg file, and will be tokenized accordingly. 
     """
     gp = ctx.obj
-    if Path(path).suffix == ".tokens":
-        gp.load_sequence(path)
-    else:
-        raise ValueError("Files of {path.suffix} suffixes can't be tokenized.")
+    match Path(path).suffix:
+        case ".tokens":
+            gp.load_sequence(path)
+        case ".jpg":
+            gp.load_image(path)
+        case _:
+            raise ValueError(
+                "Files of {path.suffix} suffixes can't be tokenized.")
 
 
 @click.group
