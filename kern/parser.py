@@ -130,7 +130,7 @@ class Parser(Generic[T]):
         for x in r'TtMmWwsS$R\'/\\Q"`~^':
             if x in token:
                 print(token)
-
+        # TODO Handle 'n' as neither shapr nor flat.
         return Note(
             pitch=Pitch[m.group(3)],
             duration=duration,
@@ -183,30 +183,31 @@ class Parser(Generic[T]):
         self, spine, indicator: str,
         tokens_iterator: Iterator[Tuple[T, str]]
     ) -> Token:
-        if indicator == '*-':
-            self.close_spine(spine)
-        elif indicator == '*+':
-            self.open_spine(self.position(spine))
-        elif indicator == '*^':
-            # Branch off into a new spine.
-            self.branch_spine(spine)
-        elif indicator == '*v':
-            for next_spine, next_token in tokens_iterator:
-                if spine and next_token == "*v":
-                    self.merge_spines(next_spine, spine)
-                elif next_token == "*":
-                    # No more merges allowed.
-                    spine = None
-                else:
-                    self.error(f"Invalid spine merge '{next_token}'")
-        elif indicator == '*x':
-            self.error("Spine exchange not implemented.")
-        elif (m := self.INDICATOR_RE.match(indicator)):
-            # Noop spine indicator.
-            if (indicator := m.group(1)):
-                self.handler.rename_spine(spine, indicator)
-        else:
-            self.error(f"Unknown spine indicator '{indicator}'.")
+        match indicator:
+            case '*-':
+                self.close_spine(spine)
+            case '*+':
+                self.open_spine(self.position(spine))
+            case '*^':
+                # Branch off into a new spine.
+                self.branch_spine(spine)
+            case '*v':
+                for next_spine, next_token in tokens_iterator:
+                    if spine and next_token == "*v":
+                        self.merge_spines(next_spine, spine)
+                    elif next_token == "*":
+                        # No more merges allowed.
+                        spine = None
+                    else:
+                        self.error(f"Invalid spine merge '{next_token}'")
+            case '*x':
+                self.error("Spine exchange not implemented.")
+            case _ if (m := self.INDICATOR_RE.match(indicator)):
+                # Noop spine indicator.
+                if (indicator := m.group(1)):
+                    self.handler.rename_spine(spine, indicator)
+            case _:
+                self.error(f"Unknown spine indicator '{indicator}'.")
         return SpinePath(indicator)
 
     REST_RE = re.compile(r'^([\d]+)?(\.*)(\.*)r$')

@@ -5,21 +5,13 @@ from typing import List, Optional
 
 
 class Pitch(Enum):
-    C = (3, 1)
-    D = (3, 2)
-    E = (3, 3)
-    F = (3, 4)
-    G = (3, 5)
-    A = (3, 6)
-    B = (3, 7)
-
-    CC = (2, 1)
-    DD = (2, 2)
-    EE = (2, 3)
-    FF = (2, 4)
-    GG = (2, 5)
-    AA = (2, 6)
-    BB = (2, 7)
+    CCCC = (0, 1)
+    DDDD = (0, 2)
+    EEEE = (0, 3)
+    FFFF = (0, 4)
+    GGGG = (0, 5)
+    AAAA = (0, 6)
+    BBBB = (0, 7)
 
     CCC = (1, 1)
     DDD = (1, 2)
@@ -29,13 +21,21 @@ class Pitch(Enum):
     AAA = (1, 6)
     BBB = (1, 7)
 
-    CCCC = (0, 1)
-    DDDD = (0, 2)
-    EEEE = (0, 3)
-    FFFF = (0, 4)
-    GGGG = (0, 5)
-    AAAA = (0, 6)
-    BBBB = (0, 7)
+    CC = (2, 1)
+    DD = (2, 2)
+    EE = (2, 3)
+    FF = (2, 4)
+    GG = (2, 5)
+    AA = (2, 6)
+    BB = (2, 7)
+
+    C = (3, 1)
+    D = (3, 2)
+    E = (3, 3)
+    F = (3, 4)
+    G = (3, 5)
+    A = (3, 6)
+    B = (3, 7)
 
     c = (4, 1)
     d = (4, 2)
@@ -68,6 +68,29 @@ class Pitch(Enum):
     gggg = (7, 5)
     aaaa = (7, 6)
     bbbb = (7, 7)
+
+    def order(self) -> int:
+        return self.value[0] * 8 + self.value[1]
+
+    def __lt__(self, other):
+        if isinstance(other, Pitch):
+            return self.order() < other.order()
+        return NotImplemented
+
+    def __le__(self, other):
+        if isinstance(other, Pitch):
+            return self.order() <= other.order()
+        return NotImplemented
+
+    def __gt__(self, other):
+        if isinstance(other, Pitch):
+            return self.order() > other.order()
+        return NotImplemented
+
+    def __ge__(self, other):
+        if isinstance(other, Pitch):
+            return self.order() >= other.order()
+        return NotImplemented
 
 
 def pitch_from_note_and_octave(note: str, octave: int) -> Pitch:

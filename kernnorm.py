@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple, Type, cast
+from typing import Callable, Dict, List, TextIO, Tuple, Type, Union, cast
 
 from kern.parser import Parser
 from kern.typing import (
@@ -47,8 +47,11 @@ class TokenFormatter:
         raise ValueError(f"No format for token {token}")
 
     def format_duration(self, duration: Duration) -> str:
-        return f"{duration.duration}:{duration.dots}" \
-            if duration.dots > 0 else str(duration.duration)
+        match duration:
+            case Duration(duration=d, dots=0):
+                return str(d)
+            case _:
+                return f"{duration.duration}:{duration.dots}"
 
     def format_pitch(self, pitch: Pitch) -> str:
         return pitch.name
@@ -77,12 +80,6 @@ class TokenFormatter:
 
     def format_note(self, spine: Spine, token: Token) -> str:
         note = cast(Note, token)
-        if note.starts_tie:
-            spine.in_tie = True
-        if note.starts_beam > 0:
-            spine.in_beam = note.starts_beam
-        assert spine.in_beam >= 0, f"Reached negative in_beam count {
-            spine.in_beam}"
         accidentals = ("#" * note.sharps) or ("-" * note.flats)
         duration_text = ""
         if (duration := note.duration) is None:
@@ -90,19 +87,10 @@ class TokenFormatter:
             duration_text = "/q"
         else:
             duration_text = f"/{self.format_duration(duration)}"
-        tie_text = "_" if spine.in_tie else ""
-        beam_count = note.has_left_beam + spine.in_beam + note.has_right_beam
-        beam_text = "=" * beam_count
         text = (
             self.format_pitch(note.pitch) + accidentals +
-            duration_text +
-            tie_text +
-            beam_text
+            duration_text
         )
-        if note.ends_beam > 0:
-            spine.in_beam -= note.ends_beam
-        if note.ends_tie:
-            spine.in_tie = False
         return text
 
     def format_chord(self, spine: Spine, token: Token) -> str:
@@ -122,11 +110,13 @@ class TokenFormatter:
 class NormHandler(Parser[Spine].Handler):
 
     formatter: TokenFormatter = TokenFormatter()
+    output: TextIO
     spines: List[Spine]
 
-    def __init__(self):
+    def __init__(self, output_path: Union[str, Path]):
         super(NormHandler, self).__init__()
         self.spines = list([])
+        self.output = open(output_path, 'w+')
 
     def position(self, spine) -> int:
         return self.spines.index(spine)
@@ -157,18 +147,22 @@ class NormHandler(Parser[Spine].Handler):
     def append(self, tokens: List[Tuple[Spine, Token]]):
         if self.should_skip(tokens):
             return
-        print('\t'.join([self.formatter.format(spine, token)
-              for spine, token in tokens]))
+        self.output.write('\t'.join([
+            self.formatter.format(spine, token)for spine, token in tokens
+        ]) + "\n")
         # for spine, token in tokens:
         #     spine.append(token)
 
+    def finish(self):
+        self.output.close()
+
 
 def parse_one(path: Path) -> bool:
-    print(path)
     try:
-        handler = NormHandler()
+        handler = NormHandler(path.with_suffix(".tokens"))
         h = Parser.from_file(path, handler)
         h.parse()
+        handler.finish()
         return True
     except Exception as e:
         print(f"{path.name}: {e}")
@@ -192,6 +186,6 @@ DATADIR = Path("/home/anselm/Downloads/GrandPiano/")
 
 
 if __name__ == '__main__':
-    parse_all()
-    # parse_one(
-    #     Path('/home/anselm/Downloads/GrandPiano/chopin/preludes/prelude28-24/original_m-56-61.krn'))
+    # parse_all()
+    parse_one(Path(
+        '/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata04-3/maj3_down_m-109-113.krn'))
