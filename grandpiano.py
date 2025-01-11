@@ -1,7 +1,7 @@
-#!/usr/bin/env python3
 
 import os
 import pickle
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, List
 
@@ -12,7 +12,7 @@ from torchvision.io import decode_image
 
 
 class GrandPiano:
-    CHORD_MAX = 6
+    CHORD_MAX = 12          # Maximum number of concurrent notes in dataset.
 
     PAD = (0, "PAD")        # Sequence vertical aka chord padding value.
     UNK = (1, "UNK")        # Unknown sequence token.
@@ -27,7 +27,7 @@ class GrandPiano:
 
     def __init__(self, datadir: Path):
         self.datadir = datadir
-        # self.list()
+        self.list()
         self.load_vocab(create=True)
 
     def list(self) -> int:
@@ -84,40 +84,68 @@ class GrandPiano:
     def load_sequence(self, path: Path) -> torch.Tensor:
         with open(path, "r") as file:
             records = list(file)
-            tensor = torch.full((len(records), self.CHORD_MAX), self.PAD[0])
+            tensor = torch.full((2+len(records), self.CHORD_MAX), self.PAD[0])
+            tensor[0, :], tensor[-1, :] = self.BOS[0], self.EOS[0]
             for idx, record in enumerate(records):
                 row = torch.Tensor([
                     self.tok2i.get(tok, self.UNK[0])for tok in record.strip().split()
                 ])
-                tensor[idx, :len(row)] = row
+                tensor[1+idx, :len(row)] = row
         return tensor
 
     def load_image(self, path: Path) -> torch.Tensor:
-        tensor = decode_image(Path(path).as_posix())
-        return tensor
+        tensor = decode_image(Path(path).as_posix()).permute(1, 2, 0)
+        height, _, rgb = tensor.shape
+        return torch.cat((
+            torch.full((height, 1, rgb), self.BOS[0]),
+            tensor,
+            torch.full((height, 1, rgb), self.EOS[0])
+        ), dim=1)
 
-    def sequence_sizes(self) -> Dict[str, int]:
-        return {
-            "min size": 0,
-            "max size": 100
-        }
+    @ staticmethod
+    def length(args) -> int:
+        gp, path = args
+        match path.suffix:
+            case ".jpg":
+                return gp.load_image(path).shape[2]
+            case ".tokens":
+                return len(gp.load_sequence(path))
+            case _:
+                raise ValueError("Unknown extension {path.suffix}")
 
-    def image_sizes(self) -> Dict[str, int]:
-        return {
-            "max height": 256,
-
-        }
+    def sequence_lengths(self) -> torch.Tensor:
+        with Pool() as p:
+            return torch.tensor(
+                p.imap(GrandPiano.length, [
+                       (self, path.with_suffix(".tokens")) for path in self.data]),
+                dtype=torch.int
+            )
 
     def stats(self):
-        sequence_length = self.sequence_sizes()
+        with Pool() as p:
+            sequence_lengths = torch.tensor(
+                p.map(GrandPiano.length, [
+                    (self, path.with_suffix(".tokens")) for path in self.data
+                ]), dtype=torch.int)
+        with Pool() as p:
+            image_lengths = torch.tensor(
+                p.map(GrandPiano.length, [
+                    (self, path.with_suffix(".jpg")) for path in self.data
+                ]), dtype=torch.int)
         return {
             "dataset size": len(self.data),
-            "vocab size": len(self.tok2i)
-        } | self.sequence_sizes() | self.image_sizes()
+            "vocab size": len(self.tok2i),
+            "sequence min length": torch.min(sequence_lengths).item(),
+            "sequence max length": torch.max(sequence_lengths).item(),
+            "sequence avg length": torch.sum(sequence_lengths).item() / len(sequence_lengths),
+            "image min length": torch.min(image_lengths).item(),
+            "image max length": torch.max(image_lengths).item(),
+            "image avg min length": torch.sum(image_lengths).item() / len(image_lengths),
+        }
 
 
-@click.command
-@click.pass_context
+@ click.command
+@ click.pass_context
 def make_vocab(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
@@ -126,8 +154,8 @@ def make_vocab(ctx):
     gp.create_vocab()
 
 
-@click.command
-@click.pass_context
+@ click.command
+@ click.pass_context
 def stats(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
@@ -137,40 +165,24 @@ def stats(ctx):
         print(f"{key}: {value:,}")
 
 
-@click.command
-@click.argument("path",
-                type=click.Path(file_okay=True),
-                required=True)
-@click.pass_context
+@ click.command
+@ click.argument("path",
+                 type=click.Path(file_okay=True),
+                 required=True)
+@ click.pass_context
 def load(ctx, path: Path):
     """
         Loads and tokenizes PATH.
 
-        PATH can be either .tokens or a .jpg file, and will be tokenized accordingly. 
+        PATH can be either .tokens or a .jpg file, and will be tokenized accordingly.
     """
     gp = ctx.obj
     match Path(path).suffix:
         case ".tokens":
-            gp.load_sequence(path)
+            tensor = gp.load_sequence(path)
         case ".jpg":
-            gp.load_image(path)
+            tensor = gp.load_image(path)
         case _:
             raise ValueError(
                 "Files of {path.suffix} suffixes can't be tokenized.")
-
-
-@click.group
-@click.option('--dataset', '-d', 'datadir',
-              type=click.Path(file_okay=False, dir_okay=True, writable=True),
-              default='/home/anselm/Downloads/GrandPiano')
-@click.pass_context
-def cli(ctx: click.Context, datadir: Path):
-    ctx.obj = GrandPiano(datadir)
-
-
-cli.add_command(make_vocab)
-cli.add_command(stats)
-cli.add_command(load)
-
-if __name__ == '__main__':
-    cli()
+    print(tensor)
