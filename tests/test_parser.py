@@ -1,4 +1,5 @@
 import unittest
+from typing import List, Tuple
 from unittest.mock import Mock, call
 
 from kern.parser import Parser
@@ -26,7 +27,7 @@ class EmptyHandler(Parser[EmptySpine].Handler):
     def rename_spine(self, spine: EmptySpine, name: str):
         pass
 
-    def append(self, spine: EmptySpine, token: Token):
+    def append(self, tokens: List[Tuple[EmptySpine, Token]]):
         pass
 
 
@@ -50,10 +51,10 @@ class TestHumdrumParser(unittest.TestCase):
         )
         parser.parse()
         self.assertEqual(handler_instance.open_spine.call_count, 1)
-        handler_instance.append.assert_has_calls([call(
+        handler_instance.append.assert_has_calls([call([(
             handler_instance.open_spine.return_value,
             expected_token
-        )])
+        )])])
 
     def test_kerns(self):
         self.fail("")
@@ -88,11 +89,11 @@ class TestHumdrumParser(unittest.TestCase):
         )
         parser.parse()
         self.assertEqual(handler_instance.open_spine.call_count, 1)
-        handler_instance.append.assert_has_calls([call(
-            handler_instance.open_spine.return_value, Note(
+        handler_instance.append.assert_has_calls([call([
+            (handler_instance.open_spine.return_value, Note(
                 pitch=Pitch.A,
                 duration=Duration(8)
-            ))])
+            ))])])
 
     def test_some_tokens(self):
         self.parse_one_token("8A\n", Note(
@@ -123,7 +124,7 @@ class TestHumdrumParser(unittest.TestCase):
 
     def test_rest_duration(self):
         self.parse_one_token("8r\n", Rest(
-            duration=Duration(8, 1),
+            duration=Duration(8, 0),
         ))
         self.parse_one_token("16..r\n", Rest(
             duration=Duration(16, 2),
