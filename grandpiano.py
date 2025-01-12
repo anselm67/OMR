@@ -18,9 +18,9 @@ class GrandPiano:
 
     PAD = (0, "PAD")        # Sequence vertical aka chord padding value.
     UNK = (1, "UNK")        # Unknown sequence token.
-    BOS = (2, "BOS")        # End of sequence token.
+    SOS = (2, "SOS")        # End of sequence token.
     EOS = (3, "EOS")        # Beginning of sequence token.
-    RESERVED_TOKENS = [PAD, UNK, EOS, BOS]
+    RESERVED_TOKENS = [PAD, UNK, EOS, SOS]
 
     datadir: Path
     data: List[Path] = list([])
@@ -110,7 +110,7 @@ class GrandPiano:
 
         print(f"{token_count:,} tokens, {len(self.tok2i):,} uniques.")
 
-    def load_sequence(self, path: Path, pad: bool = False) -> torch.Tensor:
+    def load_sequence(self, path: Path, pad: bool = False) -> Tuple[torch.Tensor, int]:
         with open(path, "r") as file:
             records = list(file)
             width = len(records)
@@ -118,13 +118,16 @@ class GrandPiano:
             assert len(records)+2 <= length, f"{path} length {
                 len(records)} exceeds padding length {self.spad_len}"
             tensor = torch.full((length, self.CHORD_MAX), self.PAD[0])
-            tensor[0, :], tensor[1+width, :] = self.BOS[0], self.EOS[0]
+            tensor[0, :], tensor[1+width, :] = self.SOS[0], self.EOS[0]
             for idx, record in enumerate(records):
                 row = torch.Tensor([
                     self.tok2i.get(tok, self.UNK[0])for tok in record.strip().split()
                 ])
                 tensor[1+idx, :len(row)] = row
-        return tensor
+        return tensor, width+2
+
+    def decode(self, tokens: List[int]):
+        return [self.i2tok.get(token, "UNK") for token in tokens]
 
     TRANSFORM = v2.Compose([
         v2.Grayscale()
@@ -134,7 +137,9 @@ class GrandPiano:
         v2.Normalize(mean=[227.11], std=[62.71], inplace=True)
     ])
 
-    def load_image(self, path: Path, norm: bool = True, pad: bool = False) -> torch.Tensor:
+    def load_image(
+        self, path: Path, norm: bool = True, pad: bool = False
+    ) -> Tuple[torch.Tensor, int]:
         image = decode_image(Path(path).as_posix()).to(torch.float32)
         image = (self.TRANSFORM_AND_NORM if norm else self.TRANSFORM)(image)
         image = image.squeeze(0).permute(1, 0)
@@ -144,18 +149,18 @@ class GrandPiano:
             path} width {width} exceeds padding width {self.ipad_len}"
         tensor = torch.full((length, height), self.PAD[0], dtype=torch.float32)
         tensor[0, :], tensor[1+width,
-                             :] = float(self.BOS[0]), float(self.EOS[0])
+                             :] = float(self.SOS[0]), float(self.EOS[0])
         tensor[1:1+width, :] = image
-        return tensor
+        return tensor, width+2
 
-    def next(self) -> Tuple[torch.Tensor, torch.Tensor]:
+    def next(self, pad: bool = False) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
         if self.position >= len(self.data):
             self.position = 0
         path = self.data[self.position]
         self.position += 1
         return (
-            self.load_image(path.with_suffix(".jpg")),
-            self.load_sequence(path.with_suffix(".tokens"))
+            *self.load_image(path.with_suffix(".jpg"), pad=pad),
+            *self.load_sequence(path.with_suffix(".tokens"), pad=pad)
         )
 
     @ staticmethod

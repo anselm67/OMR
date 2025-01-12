@@ -16,3 +16,8 @@ kernnorm.py
     to 3k) and much less single occurences of tokens too.
 grandpiano.py
     Loading and prepping the GrandPiano dataset.
+model.py    
+    The translation model.
+train.py
+    All train related commands.
+    
