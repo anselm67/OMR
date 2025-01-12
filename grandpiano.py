@@ -4,7 +4,7 @@ import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, cast
 
 import click
 import torch
@@ -18,17 +18,33 @@ class GrandPiano:
 
     PAD = (0, "PAD")        # Sequence vertical aka chord padding value.
     UNK = (1, "UNK")        # Unknown sequence token.
-    EOS = (2, "EOS")        # Beginning of sequence token.
-    BOS = (3, "BOS")        # End of sequence token.
+    BOS = (2, "BOS")        # End of sequence token.
+    EOS = (3, "EOS")        # Beginning of sequence token.
     RESERVED_TOKENS = [PAD, UNK, EOS, BOS]
 
     datadir: Path
     data: List[Path] = list([])
     tok2i: Dict[str, int]
     i2tok: Dict[int, str]
+    position: int = 0
 
-    def __init__(self, datadir: Path):
+    image_height: int   # Image - constant - height in dataset.
+    ipad_len: int       # Width for padding images, largers dropped.
+    spad_len: int       # Length for padding sequences, longers dropped.
+
+    @property
+    def vocab_size(self):
+        return len(self.tok2i)
+
+    def __init__(self,
+                 datadir: Path,
+                 image_height: int = 256,
+                 ipad_len: int = 2048,
+                 spad_len: int = 100):
         self.datadir = datadir
+        self.image_height = image_height
+        self.ipad_len = ipad_len
+        self.spad_len = spad_len
         self.list(create=True)
         self.load_vocab(create=True)
 
@@ -94,11 +110,15 @@ class GrandPiano:
 
         print(f"{token_count:,} tokens, {len(self.tok2i):,} uniques.")
 
-    def load_sequence(self, path: Path) -> torch.Tensor:
+    def load_sequence(self, path: Path, pad: bool = False) -> torch.Tensor:
         with open(path, "r") as file:
             records = list(file)
-            tensor = torch.full((2+len(records), self.CHORD_MAX), self.PAD[0])
-            tensor[0, :], tensor[-1, :] = self.BOS[0], self.EOS[0]
+            width = len(records)
+            length = self.spad_len if pad else width+2
+            assert len(records)+2 <= length, f"{path} length {
+                len(records)} exceeds padding length {self.spad_len}"
+            tensor = torch.full((length, self.CHORD_MAX), self.PAD[0])
+            tensor[0, :], tensor[1+width, :] = self.BOS[0], self.EOS[0]
             for idx, record in enumerate(records):
                 row = torch.Tensor([
                     self.tok2i.get(tok, self.UNK[0])for tok in record.strip().split()
@@ -106,18 +126,37 @@ class GrandPiano:
                 tensor[1+idx, :len(row)] = row
         return tensor
 
-    TRANSFORMS = v2.Compose([
+    TRANSFORM = v2.Compose([
         v2.Grayscale()
     ])
+    TRANSFORM_AND_NORM = v2.Compose([
+        TRANSFORM,
+        v2.Normalize(mean=[227.11], std=[62.71], inplace=True)
+    ])
 
-    def load_image(self, path: Path) -> torch.Tensor:
-        tensor = self.TRANSFORMS(decode_image(Path(path).as_posix()))
-        _, height, _ = tensor.shape
-        return torch.cat((
-            torch.full((height, 1), self.BOS[0]),
-            tensor.permute(1, 2, 0).squeeze(2),
-            torch.full((height, 1), self.EOS[0])
-        ), dim=1).to(torch.float32)
+    def load_image(self, path: Path, norm: bool = True, pad: bool = False) -> torch.Tensor:
+        image = decode_image(Path(path).as_posix()).to(torch.float32)
+        image = (self.TRANSFORM_AND_NORM if norm else self.TRANSFORM)(image)
+        image = image.squeeze(0).permute(1, 0)
+        width, height = image.shape
+        length = self.ipad_len if pad else width+2
+        assert width+2 <= length, f"{
+            path} width {width} exceeds padding width {self.ipad_len}"
+        tensor = torch.full((length, height), self.PAD[0], dtype=torch.float32)
+        tensor[0, :], tensor[1+width,
+                             :] = float(self.BOS[0]), float(self.EOS[0])
+        tensor[1:1+width, :] = image
+        return tensor
+
+    def next(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        if self.position >= len(self.data):
+            self.position = 0
+        path = self.data[self.position]
+        self.position += 1
+        return (
+            self.load_image(path.with_suffix(".jpg")),
+            self.load_sequence(path.with_suffix(".tokens"))
+        )
 
     @ staticmethod
     def sequence_length(args) -> int:
@@ -134,7 +173,7 @@ class GrandPiano:
     @staticmethod
     def image_stats(args) -> Tuple[int, float, float]:
         gp, path = args
-        image = gp.load_image(path.with_suffix(".jpg"))
+        image = gp.load_image(path.with_suffix(".jpg"), norm=False)
         return image.shape[1], image.mean(dim=[0, 1]), image.std(dim=[0, 1])
 
     def images_stats(self) -> Dict[str, str]:
@@ -189,7 +228,7 @@ def refresh_list(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
     """
-    gp = ctx.obj
+    gp = cast(GrandPiano, ctx.obj)
     gp.list(refresh=True)
 
 
@@ -199,7 +238,7 @@ def stats(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
     """
-    gp = ctx.obj
+    gp = cast(GrandPiano, ctx.obj)
     for key, value in gp.stats().items():
         print(f"{key:<20}: {value}")
 
@@ -208,19 +247,21 @@ def stats(ctx):
 @ click.argument("path",
                  type=click.Path(file_okay=True),
                  required=True)
+@click.option("--pad", is_flag=True,
+              help="Pad the itemafter loading.")
 @ click.pass_context
-def load(ctx, path: Path):
+def load(ctx, path: Path, pad: bool = False):
     """
         Loads and tokenizes PATH.
 
         PATH can be either .tokens or a .jpg file, and will be tokenized accordingly.
     """
-    gp = ctx.obj
+    gp = cast(GrandPiano, ctx.obj)
     match Path(path).suffix:
         case ".tokens":
-            tensor = gp.load_sequence(path)
+            tensor = gp.load_sequence(path, pad=pad)
         case ".jpg":
-            tensor = gp.load_image(path)
+            tensor = gp.load_image(path, pad=pad)
         case _:
             raise ValueError(
                 "Files of {path.suffix} suffixes can't be tokenized.")
