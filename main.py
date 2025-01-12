@@ -4,7 +4,7 @@ from pathlib import Path
 
 import click
 
-from grandpiano import GrandPiano, load, make_vocab, stats
+from grandpiano import GrandPiano, load, make_vocab, refresh_list, stats
 
 
 @click.group
@@ -19,6 +19,7 @@ def cli(ctx: click.Context, datadir: Path):
 cli.add_command(make_vocab)
 cli.add_command(stats)
 cli.add_command(load)
+cli.add_command(refresh_list)
 
 if __name__ == '__main__':
     cli()
