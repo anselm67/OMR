@@ -32,6 +32,9 @@ class GrandPiano:
     ipad_len: int       # Width for padding images, largers dropped.
     spad_len: int       # Length for padding sequences, longers dropped.
 
+    transform: v2.Compose
+    transform_and_norm: v2.Compose
+
     @property
     def vocab_size(self):
         return len(self.tok2i)
@@ -39,12 +42,21 @@ class GrandPiano:
     def __init__(self,
                  datadir: Path,
                  image_height: int = 256,
-                 ipad_len: int = 2048,
-                 spad_len: int = 100):
+                 ipad_len: int = 3058,          # Max image width.
+                 spad_len: int = 207):          # Max sequence length.
         self.datadir = datadir
         self.image_height = image_height
         self.ipad_len = ipad_len
         self.spad_len = spad_len
+        # Initializes image transforms, with/without norming.
+        self.transform = v2.Compose([
+            v2.Grayscale(),
+            v2.Resize(image_height)
+        ])
+        self.transform_and_norm = v2.Compose([
+            self.transform,
+            v2.Normalize(mean=[228.06], std=[62.78])
+        ])
         self.list(create=True)
         self.load_vocab(create=True)
 
@@ -129,19 +141,11 @@ class GrandPiano:
     def decode(self, tokens: List[int]):
         return [self.i2tok.get(token, "UNK") for token in tokens]
 
-    TRANSFORM = v2.Compose([
-        v2.Grayscale()
-    ])
-    TRANSFORM_AND_NORM = v2.Compose([
-        TRANSFORM,
-        v2.Normalize(mean=[227.11], std=[62.71], inplace=True)
-    ])
-
     def load_image(
         self, path: Path, norm: bool = True, pad: bool = False
     ) -> Tuple[torch.Tensor, int]:
         image = decode_image(Path(path).as_posix()).to(torch.float32)
-        image = (self.TRANSFORM_AND_NORM if norm else self.TRANSFORM)(image)
+        image = (self.transform_and_norm if norm else self.transform)(image)
         image = image.squeeze(0).permute(1, 0)
         width, height = image.shape
         length = self.ipad_len if pad else width+2
@@ -164,9 +168,10 @@ class GrandPiano:
         )
 
     @ staticmethod
-    def sequence_length(args) -> int:
+    def sequence_length(args: Tuple['GrandPiano', Path]) -> int:
         gp, path = args
-        return len(gp.load_sequence(path))
+        _, length = gp.load_sequence(path)
+        return length
 
     def sequences_length(self) -> torch.Tensor:
         with ProcessPoolExecutor(2) as executor:
@@ -176,10 +181,10 @@ class GrandPiano:
             )
 
     @staticmethod
-    def image_stats(args) -> Tuple[int, float, float]:
+    def image_stats(args: Tuple['GrandPiano', Path]) -> Tuple[int, float, float]:
         gp, path = args
-        image = gp.load_image(path.with_suffix(".jpg"), norm=False)
-        return image.shape[1], image.mean(dim=[0, 1]), image.std(dim=[0, 1])
+        image, _ = gp.load_image(path.with_suffix(".jpg"), norm=False)
+        return image.shape[0], image.mean(dim=[0, 1]).item(), image.std(dim=[0, 1]).item()
 
     def images_stats(self) -> Dict[str, str]:
         with ProcessPoolExecutor(2) as executor:
