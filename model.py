@@ -84,7 +84,7 @@ class Translator(nn.Module):
     def __init__(self, config: Config):
         super(Translator, self).__init__()
         self.source_embedder = SourceEmbedder(config)
-        self.target_embedded = TargetEmbedder(config)
+        self.target_embedder = TargetEmbedder(config)
         self.transformer = nn.Transformer(
             d_model=config.embed_size,
             nhead=config.num_head,
@@ -100,7 +100,7 @@ class Translator(nn.Module):
 
     def forward(self, source, target, attention_mask):
         source_embeds = self.source_embedder(source)
-        target_embeds = self.target_embedded(target)
+        target_embeds = self.target_embedder(target)
         source_mask = (source == GrandPiano.PAD[0])[:, :, 0]
         outs = self.transformer(
             src=source_embeds, tgt=target_embeds,
@@ -113,3 +113,11 @@ class Translator(nn.Module):
         outs = self.generator(outs)
         outs = outs.view(B, T, H, -1)
         return outs
+
+    def encode(self, source, src_key_padding_mask):
+        return self.transformer.encoder(
+            self.source_embedder(source),
+            src_key_padding_mask=src_key_padding_mask)
+
+    def decode(self, target, memory, target_mask):
+        return self.transformer.decoder(self.target_embedder(target), memory, target_mask)

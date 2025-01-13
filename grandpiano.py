@@ -2,11 +2,11 @@
 import math
 import os
 import pickle
+import random
 import time
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Literal, Optional, Tuple, TypeAlias, cast
 
 import click
 import matplotlib.pyplot as plt
@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 from torchvision.io import decode_image
 from torchvision.transforms import v2
+
+Dataset: TypeAlias = Literal["train", "valid", "all"]
 
 
 class FixedHeightResize(v2.Transform):
@@ -36,11 +38,12 @@ class FixedHeightResize(v2.Transform):
 class GrandPiano:
     CHORD_MAX = 12          # Maximum number of concurrent notes in dataset.
 
-    PAD = (0, "PAD")        # Sequence vertical aka chord padding value.
+    PAD = (0, "PAD")        # Padding for image and sequence length value.
     UNK = (1, "UNK")        # Unknown sequence token.
-    SOS = (2, "SOS")        # End of sequence token.
-    EOS = (3, "EOS")        # Beginning of sequence token.
-    RESERVED_TOKENS = [PAD, UNK, EOS, SOS]
+    SOS = (2, "SOS")        # Start of sequence token.
+    EOS = (3, "EOS")        # End of sequence token.
+    SIL = (4, "SIL")        # Chord padding to CHORD_MAX.
+    RESERVED_TOKENS = [PAD, UNK, SOS, EOS, SIL]
 
     @dataclass
     class Filter:
@@ -65,10 +68,10 @@ class GrandPiano:
     STATS = Stats()
 
     datadir: Path
-    data: List[Path] = list([])
+    train_data: List[Path] = list([])
+    valid_data: List[Path] = list([])
     tok2i: Dict[str, int]
     i2tok: Dict[int, str]
-    position: int = 0
 
     image_height: int   # Image - constant - height in dataset.
     ipad_len: int       # Width for padding images, largers dropped.
@@ -113,25 +116,49 @@ class GrandPiano:
         self.list(create=True)
         self.load_vocab(create=True)
 
-    def list(self, create: bool = False, refresh: bool = False) -> int:
+    def list(self, create: bool = False, refresh: bool = False) -> Tuple[int, int]:
+        """
+        Lists all samples available in the datadir, and caches the train/valid split.
+
+        Args:
+            create (bool, optional): Creates the cache if iit doesn't exist. Defaults to False.
+            refresh (bool, optional): Force a cache refresh. Defaults to False.
+
+        Raises:
+            FileNotFoundError: If create is False and the cache doesn't exist.
+
+        Returns:
+            Tuple[int, int]: train and valid sizes.
+        """
         list_path = Path(self.datadir) / 'list.pickle'
         if list_path.exists() and not refresh:
             with open(list_path, "rb") as f:
-                self.data = pickle.load(f)
+                obj = pickle.load(f)
+                self.train_data, self.valid_data = obj["train_data"], obj["valid_data"]
         elif create or refresh:
-            self.data = list([])
+            data = []
             for root, _, filenames in os.walk(self.datadir):
                 for filename in filenames:
                     path = Path(root) / filename
                     if path.suffix == '.tokens' and path.with_suffix(".jpg").exists():
-                        self.data.append(path.with_suffix(""))
+                        data.append(path.with_suffix(""))
+            random.shuffle(data)
+            train_size = int(len(data) * 0.85)
+            self.train_data = data[:train_size]
+            self.valid_data = data[train_size:]
             with open(list_path, "wb+") as f:
-                pickle.dump(self.data, f)
-            print(f"{len(self.data)} samples found.")
+                pickle.dump({
+                    "train_data": self.train_data,
+                    "valid_data": self.valid_data
+                }, f)
+            print(
+                f"{len(data):,} samples found, " +
+                f"split: {len(self.train_data):,}/{len(self.valid_data):,}."
+            )
         else:
             raise FileNotFoundError(f"List file {list_path} not found.")
         # Loads the set of samples.
-        return len(self.data)
+        return len(self.train_data), len(self.valid_data)
 
     def load_vocab(self, create: bool = False):
         # Loads the vocab for sequences.
@@ -143,8 +170,7 @@ class GrandPiano:
             self.tok2i = obj['tok2i']
             self.i2tok = obj['i2tok']
         elif create:
-            self.create_vocab()
-            self.save_vocab()
+            self.create_vocab(save=True)
         else:
             raise FileNotFoundError(f"Pickle file {vocab_path} not found.")
 
@@ -157,12 +183,12 @@ class GrandPiano:
                 "i2tok": self.i2tok
             }, f)
 
-    def create_vocab(self):
+    def create_vocab(self, save: bool = True):
         self.tok2i = {key: value for key,               # type: ignore
                       value in self.RESERVED_TOKENS}
         self.i2tok = {value: key for value, key in self.RESERVED_TOKENS}
         token_count = len(self.tok2i)
-        for path in self.data:
+        for path in self.train_data + self.valid_data:
             file = path.with_suffix(".tokens")
             with open(file, "r") as input:
                 for line in input:
@@ -172,7 +198,8 @@ class GrandPiano:
                             token_id = len(self.tok2i)
                             self.tok2i[token] = token_id
                             self.i2tok[token_id] = token
-
+        if save:
+            self.save_vocab()
         print(f"{token_count:,} tokens, {len(self.tok2i):,} uniques.")
 
     def load_sequence(
@@ -196,6 +223,7 @@ class GrandPiano:
                 row = torch.Tensor([
                     self.tok2i.get(tok, self.UNK[0])for tok in record.strip().split()
                 ])
+                tensor[1+idx, len(row):] = self.SIL[0]
                 tensor[1+idx, :len(row)] = row
         return tensor, width+2
 
@@ -220,27 +248,36 @@ class GrandPiano:
         tensor[1:1+width, :] = image
         return tensor, width+2
 
-    def len(self) -> int:
-        return len(self.data)
+    def get_dataset(self, dataset_name: Dataset) -> List[Path]:
+        match dataset_name:
+            case "train":
+                return self.train_data
+            case "valid":
+                return self.valid_data
+            case "all":
+                return self.train_data + self.valid_data
+            case _:
+                raise ValueError(f"Invalid dataset '{dataset}'.")
+
+    def len(self, dataset_name: Dataset) -> int:
+        return len(self.get_dataset(dataset_name))
 
     def next(
         self,
+        dataset_name: Dataset,
         pad: bool = False,
         device: str = "cpu"
     ) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
-        start_position = self.position
+        dataset = self.get_dataset(dataset_name)
         while True:
-            if self.position >= len(self.data):
-                self.position = 0
-            path = self.data[self.position]
-            self.position += 1
-            image, width = self.load_image(path.with_suffix(
-                ".jpg"), pad=pad, device=device)
-            sequence, length = self.load_sequence(path.with_suffix(
-                ".tokens"), pad=pad, device=device)
+            position = random.randint(0, len(dataset) - 1)
+            path = dataset[position]
+            image, width = self.load_image(
+                path.with_suffix(".jpg"), pad=pad, device=device)
+            sequence, length = self.load_sequence(
+                path.with_suffix(".tokens"), pad=pad, device=device)
             if image is not None and sequence is not None:
                 return (image, width, sequence, length)
-            assert self.position != start_position, "All samples"
 
     @ staticmethod
     def sequence_length(args: Tuple['GrandPiano', Path]) -> int:
@@ -248,10 +285,10 @@ class GrandPiano:
         _, length = gp.load_sequence(path)
         return length
 
-    def sequences_length(self) -> torch.Tensor:
-        with ProcessPoolExecutor(2) as executor:
-            stats = list(executor.map(GrandPiano.sequence_length, [
-                (self, path.with_suffix(".tokens")) for path in self.data], chunksize=500))
+    def sequences_length(self, dataset_name: Dataset = "all") -> torch.Tensor:
+        dataset = self.get_dataset(dataset_name)
+        stats = map(GrandPiano.sequence_length, [
+            (self, path.with_suffix(".tokens")) for path in dataset])
         return torch.tensor([length for length in stats if length > 0], dtype=torch.int)
 
     @staticmethod
@@ -263,17 +300,17 @@ class GrandPiano:
         else:
             return None
 
-    def images_length(self) -> torch.Tensor:
-        with ProcessPoolExecutor(2) as executor:
-            stats = executor.map(GrandPiano.image_stats, [
-                (self, path.with_suffix(".jpg")) for path in self.data], chunksize=500)
+    def images_length(self, dataset_name: Dataset = "all") -> torch.Tensor:
+        dataset = self.get_dataset(dataset_name)
+        stats = map(GrandPiano.image_stats, [
+            (self, path.with_suffix(".jpg")) for path in dataset])
         stats = [stat for stat in stats if stat is not None]
         return torch.Tensor([l for l, m, s in stats])
 
-    def images_stats(self) -> Dict[str, str]:
-        with ProcessPoolExecutor(2) as executor:
-            stats = list(executor.map(GrandPiano.image_stats, [
-                (self, path.with_suffix(".jpg")) for path in self.data], chunksize=500))
+    def images_stats(self, dataset_name: Dataset = "all") -> Dict[str, str]:
+        dataset = self.get_dataset(dataset_name)
+        stats = map(GrandPiano.image_stats, [
+            (self, path.with_suffix(".jpg")) for path in dataset])
         stats = [stat for stat in stats if stat is not None]
         lengths = [l for l, m, s in stats]
         means = sum([m for l, m, s in stats])
@@ -299,7 +336,8 @@ class GrandPiano:
 
         # Packs and returns all available stats.
         return {
-            "dataset size": f"{len(self.data):,}",
+            "train dataset size": f"{len(self.train_data):,}",
+            "valid dataset size": f"{len(self.valid_data):,}",
             "vocab size": f"{len(self.tok2i):,}",
             "sequence min length": f"{torch.min(sequence_lengths).item()}",
             "sequence max length": f"{torch.max(sequence_lengths).item()}",
@@ -313,7 +351,7 @@ def make_vocab(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
     """
-    gp = ctx.obj
+    gp = cast(GrandPiano, ctx.obj)
     gp.create_vocab()
 
 
