@@ -1,4 +1,5 @@
 
+import math
 import os
 import pickle
 import time
@@ -7,10 +8,28 @@ from pathlib import Path
 from typing import Dict, List, Tuple, cast
 
 import click
+import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
 from torchvision.io import decode_image
 from torchvision.transforms import v2
+
+
+class FixedHeightResize(v2.Transform):
+
+    height: int     # Requested height
+
+    def __init__(self, height):
+        super(FixedHeightResize, self).__init__()
+        self.height = height
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        channels, height, width = image.shape
+        if height == self.height:
+            return image
+        else:
+            ratio = float(self.height) / float(height)
+            return v2.functional.resize(image, [self.height, math.ceil(width * ratio)])
 
 
 class GrandPiano:
@@ -51,7 +70,8 @@ class GrandPiano:
         # Initializes image transforms, with/without norming.
         self.transform = v2.Compose([
             v2.Grayscale(),
-            v2.Resize(image_height)
+            FixedHeightResize(image_height),
+            v2.ToDtype(torch.float)
         ])
         self.transform_and_norm = v2.Compose([
             self.transform,
@@ -122,14 +142,20 @@ class GrandPiano:
 
         print(f"{token_count:,} tokens, {len(self.tok2i):,} uniques.")
 
-    def load_sequence(self, path: Path, pad: bool = False) -> Tuple[torch.Tensor, int]:
+    def load_sequence(
+        self,
+        path: Path,
+        pad: bool = False,
+        device: str = "cpu"
+    ) -> Tuple[torch.Tensor, int]:
         with open(path, "r") as file:
             records = list(file)
             width = len(records)
             length = self.spad_len if pad else width+2
             assert len(records)+2 <= length, f"{path} length {
                 len(records)} exceeds padding length {self.spad_len}"
-            tensor = torch.full((length, self.CHORD_MAX), self.PAD[0])
+            tensor = torch.full(
+                (length, self.CHORD_MAX), self.PAD[0]).to(device)
             tensor[0, :], tensor[1+width, :] = self.SOS[0], self.EOS[0]
             for idx, record in enumerate(records):
                 row = torch.Tensor([
@@ -142,9 +168,9 @@ class GrandPiano:
         return [self.i2tok.get(token, "UNK") for token in tokens]
 
     def load_image(
-        self, path: Path, norm: bool = True, pad: bool = False
+        self, path: Path, norm: bool = True, pad: bool = False, device: str = "cpu"
     ) -> Tuple[torch.Tensor, int]:
-        image = decode_image(Path(path).as_posix()).to(torch.float32)
+        image = decode_image(Path(path).as_posix()).to(device)
         image = (self.transform_and_norm if norm else self.transform)(image)
         image = image.squeeze(0).permute(1, 0)
         width, height = image.shape
@@ -157,14 +183,21 @@ class GrandPiano:
         tensor[1:1+width, :] = image
         return tensor, width+2
 
-    def next(self, pad: bool = False) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
+    def len(self) -> int:
+        return len(self.data)
+
+    def next(
+        self,
+        pad: bool = False,
+        device: str = "cpu"
+    ) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
         if self.position >= len(self.data):
             self.position = 0
         path = self.data[self.position]
         self.position += 1
         return (
-            *self.load_image(path.with_suffix(".jpg"), pad=pad),
-            *self.load_sequence(path.with_suffix(".tokens"), pad=pad)
+            *self.load_image(path.with_suffix(".jpg"), pad=pad, device=device),
+            *self.load_sequence(path.with_suffix(".tokens"), pad=pad, device=device)
         )
 
     @ staticmethod
@@ -185,6 +218,12 @@ class GrandPiano:
         gp, path = args
         image, _ = gp.load_image(path.with_suffix(".jpg"), norm=False)
         return image.shape[0], image.mean(dim=[0, 1]).item(), image.std(dim=[0, 1]).item()
+
+    def images_length(self) -> torch.Tensor:
+        with ProcessPoolExecutor(2) as executor:
+            stats = list(executor.map(GrandPiano.image_stats, [
+                (self, path.with_suffix(".jpg")) for path in self.data], chunksize=500))
+        return torch.Tensor([l for l, m, s in stats])
 
     def images_stats(self) -> Dict[str, str]:
         with ProcessPoolExecutor(2) as executor:
@@ -222,8 +261,8 @@ class GrandPiano:
         } | image_stats
 
 
-@ click.command
-@ click.pass_context
+@click.command
+@click.pass_context
 def make_vocab(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
@@ -232,8 +271,8 @@ def make_vocab(ctx):
     gp.create_vocab()
 
 
-@ click.command
-@ click.pass_context
+@click.command
+@click.pass_context
 def refresh_list(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
@@ -242,8 +281,8 @@ def refresh_list(ctx):
     gp.list(refresh=True)
 
 
-@ click.command
-@ click.pass_context
+@click.command
+@click.pass_context
 def stats(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
@@ -253,10 +292,30 @@ def stats(ctx):
         print(f"{key:<20}: {value}")
 
 
-@ click.command
-@ click.argument("path",
-                 type=click.Path(file_okay=True),
-                 required=True)
+@click.command
+@click.pass_context
+def histo(ctx):
+    """
+
+        Plots the histogram of sequence and image lengths.
+
+    """
+    gp = cast(GrandPiano, ctx.obj)
+    sequence_lengths = gp.sequences_length()
+    image_lengths = gp.images_length()
+    fig, (ax1, ax2) = plt.subplots(2, 1)
+    ax1.hist(sequence_lengths.numpy(), bins=50, cumulative=True, density=True)
+    ax1.set_xlabel('Sequence lengths')
+    ax2.hist(image_lengths.numpy(), bins=50, cumulative=True, density=True)
+    ax2.set_xlabel('Image widths')
+    fig.tight_layout()
+    plt.show()
+
+
+@click.command
+@click.argument("path",
+                type=click.Path(file_okay=True),
+                required=True)
 @click.option("--pad", is_flag=True,
               help="Pad the itemafter loading.")
 @ click.pass_context
