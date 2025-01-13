@@ -12,6 +12,7 @@ from torchinfo import summary
 
 from grandpiano import Dataset, GrandPiano
 from model import Config, Translator
+from utils import current_commit
 
 DATADIR = Path("/home/anselm/Downloads/GrandPiano")
 
@@ -35,11 +36,13 @@ model = Translator(config)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001,
                              betas=(0.9, 0.98), eps=1e-9)
 start_epoch = 1
+git_commit = current_commit()
 
 MODEL_PATH = Path("untracked") / "checkpoint.pt"
 if MODEL_PATH.exists():
     obj = torch.load(MODEL_PATH, weights_only=True)
     start_epoch = obj["epoch"]
+    git_commit = obj["git_commit"]
     model.load_state_dict(obj["state_dict"])
     optimizer.load_state_dict(obj['optimizer'])
 
@@ -74,6 +77,7 @@ def checkpoint(path: Path, epoch: int, model: nn.Module, opt: torch.optim.Adam):
     print(f"Checkpoint to {path}")
     torch.save({
         'epoch': epoch,
+        'git_commit': git_commit,
         'state_dict': model.state_dict(),
         'optimizer': opt.state_dict()
     }, path)
@@ -101,7 +105,8 @@ class TrainLog:
         with open(self.path, "w+") as f:
             json.dump({
                 "losses": self.losses,
-                "vlosses": self.vlosses
+                "vlosses": self.vlosses,
+                "git_commit": git_commit
             }, f, indent=4)
 
     def log(self, loss: float, vloss: float):
