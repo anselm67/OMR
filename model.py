@@ -10,7 +10,7 @@ from grandpiano import GrandPiano
 
 @dataclass
 class Config:
-    # Dataset related configuration.
+    # Dataset related configuration, provided by GrandPiano.
     image_height: int = 256
     max_image_width: int = 2048
     max_sequence_height: int = 12
@@ -19,15 +19,15 @@ class Config:
 
     # Image embedder config.
     image_reducer: int = 64
-    embed_size: int = 128
+    embed_size: int = 256
 
     # Sequence embedder config.
     sequence_reducer: int = 64
 
     # Transformer config.
     num_head = 8
-    num_encoder_layers = 3
-    num_decoder_layers = 3
+    num_encoder_layers = 4
+    num_decoder_layers = 4
     dim_feed_forward = 1024
     dropout = 0.1
 

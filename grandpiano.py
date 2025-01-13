@@ -4,8 +4,9 @@ import os
 import pickle
 import time
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import click
 import matplotlib.pyplot as plt
@@ -41,6 +42,28 @@ class GrandPiano:
     EOS = (3, "EOS")        # Beginning of sequence token.
     RESERVED_TOKENS = [PAD, UNK, EOS, SOS]
 
+    @dataclass
+    class Filter:
+        max_image_width: int = -1
+        max_sequence_length: int = -1
+
+        def accept_image(self, width: int) -> bool:
+            return width < self.max_image_width
+
+        def accept_sequence(self, length: int) -> bool:
+            return length < self.max_sequence_length
+
+    # TODO Have an option to the stats command to generate this.
+    @dataclass
+    class Stats:
+        image_height: int = 256
+        max_image_width: int = 3058
+        image_mean: float = 22.06
+        image_std: float = 62.78
+        max_sequence_length: int = 207
+
+    STATS = Stats()
+
     datadir: Path
     data: List[Path] = list([])
     tok2i: Dict[str, int]
@@ -54,23 +77,33 @@ class GrandPiano:
     transform: v2.Compose
     transform_and_norm: v2.Compose
 
+    filter: Optional[Filter]
+
     @property
     def vocab_size(self):
         return len(self.tok2i)
 
     def __init__(self,
                  datadir: Path,
-                 image_height: int = 256,
-                 ipad_len: int = 3058,          # Max image width.
-                 spad_len: int = 207):          # Max sequence length.
+                 filter: Optional[Filter] = None):
         self.datadir = datadir
-        self.image_height = image_height
-        self.ipad_len = ipad_len
-        self.spad_len = spad_len
+        self.filter = filter
+        self.image_height = self.STATS.image_height
+        # Computes the padding lengths.
+        # These act as filter as items longer than the pad size are filtered out of
+        # the dataset. You can use the 'histo' command from main.py to adjust these
+        # numbers.
+        self.ipad_len = self.STATS.max_image_width
+        self.spad_len = self.STATS.max_sequence_length
+        if filter is not None:
+            if filter.max_image_width > 0:
+                self.ipad_len = filter.max_image_width
+            if filter.max_sequence_length > 0:
+                self.spad_len = filter.max_sequence_length
         # Initializes image transforms, with/without norming.
         self.transform = v2.Compose([
             v2.Grayscale(),
-            FixedHeightResize(image_height),
+            FixedHeightResize(self.STATS.image_height),
             v2.ToDtype(torch.float)
         ])
         self.transform_and_norm = v2.Compose([
@@ -147,10 +180,12 @@ class GrandPiano:
         path: Path,
         pad: bool = False,
         device: str = "cpu"
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Optional[torch.Tensor], int]:
         with open(path, "r") as file:
             records = list(file)
             width = len(records)
+            if self.filter and not self.filter.accept_sequence(width+2):
+                return None, 0
             length = self.spad_len if pad else width+2
             assert len(records)+2 <= length, f"{path} length {
                 len(records)} exceeds padding length {self.spad_len}"
@@ -169,11 +204,13 @@ class GrandPiano:
 
     def load_image(
         self, path: Path, norm: bool = True, pad: bool = False, device: str = "cpu"
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[Optional[torch.Tensor], int]:
         image = decode_image(Path(path).as_posix()).to(device)
         image = (self.transform_and_norm if norm else self.transform)(image)
         image = image.squeeze(0).permute(1, 0)
         width, height = image.shape
+        if self.filter and not self.filter.accept_image(width+2):
+            return None, 0
         length = self.ipad_len if pad else width+2
         assert width+2 <= length, f"{
             path} width {width} exceeds padding width {self.ipad_len}"
@@ -191,14 +228,19 @@ class GrandPiano:
         pad: bool = False,
         device: str = "cpu"
     ) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
-        if self.position >= len(self.data):
-            self.position = 0
-        path = self.data[self.position]
-        self.position += 1
-        return (
-            *self.load_image(path.with_suffix(".jpg"), pad=pad, device=device),
-            *self.load_sequence(path.with_suffix(".tokens"), pad=pad, device=device)
-        )
+        start_position = self.position
+        while True:
+            if self.position >= len(self.data):
+                self.position = 0
+            path = self.data[self.position]
+            self.position += 1
+            image, width = self.load_image(path.with_suffix(
+                ".jpg"), pad=pad, device=device)
+            sequence, length = self.load_sequence(path.with_suffix(
+                ".tokens"), pad=pad, device=device)
+            if image is not None and sequence is not None:
+                return (image, width, sequence, length)
+            assert self.position != start_position, "All samples"
 
     @ staticmethod
     def sequence_length(args: Tuple['GrandPiano', Path]) -> int:
@@ -208,27 +250,31 @@ class GrandPiano:
 
     def sequences_length(self) -> torch.Tensor:
         with ProcessPoolExecutor(2) as executor:
-            return torch.tensor(list(executor.map(GrandPiano.sequence_length, [
-                (self, path.with_suffix(".tokens")) for path in self.data], chunksize=500)),
-                dtype=torch.int
-            )
+            stats = list(executor.map(GrandPiano.sequence_length, [
+                (self, path.with_suffix(".tokens")) for path in self.data], chunksize=500))
+        return torch.tensor([length for length in stats if length > 0], dtype=torch.int)
 
     @staticmethod
-    def image_stats(args: Tuple['GrandPiano', Path]) -> Tuple[int, float, float]:
+    def image_stats(args: Tuple['GrandPiano', Path]) -> Optional[Tuple[int, float, float]]:
         gp, path = args
         image, _ = gp.load_image(path.with_suffix(".jpg"), norm=False)
-        return image.shape[0], image.mean(dim=[0, 1]).item(), image.std(dim=[0, 1]).item()
+        if image is not None:
+            return image.shape[0], image.mean(dim=[0, 1]).item(), image.std(dim=[0, 1]).item()
+        else:
+            return None
 
     def images_length(self) -> torch.Tensor:
         with ProcessPoolExecutor(2) as executor:
-            stats = list(executor.map(GrandPiano.image_stats, [
-                (self, path.with_suffix(".jpg")) for path in self.data], chunksize=500))
+            stats = executor.map(GrandPiano.image_stats, [
+                (self, path.with_suffix(".jpg")) for path in self.data], chunksize=500)
+        stats = [stat for stat in stats if stat is not None]
         return torch.Tensor([l for l, m, s in stats])
 
     def images_stats(self) -> Dict[str, str]:
         with ProcessPoolExecutor(2) as executor:
             stats = list(executor.map(GrandPiano.image_stats, [
                 (self, path.with_suffix(".jpg")) for path in self.data], chunksize=500))
+        stats = [stat for stat in stats if stat is not None]
         lengths = [l for l, m, s in stats]
         means = sum([m for l, m, s in stats])
         stds = sum([s for l, m, s in stats])
