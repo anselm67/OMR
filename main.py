@@ -14,10 +14,32 @@ from grandpiano import GrandPiano, histo, load, make_vocab, refresh_list, stats
                 type=click.Path(file_okay=True),
                 default=Path("untracked/train_log.json"))
 def plot(jsonpath: Path):
-    with open(jsonpath, "r") as f:
-        log = json.load(f)
-    plt.plot(log["losses"])
-    plt.show()
+    """
+
+    Plots and tracks the training losses emitted while training the model.
+    """
+    # State and function to quit the tracking loop.
+    quit: bool = False
+
+    def on_key(event):
+        nonlocal quit
+        quit = (event.key == 'q')
+
+    fig, ax = plt.subplots()
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    line, = ax.plot([], [])
+    print("Press 'q' to quit.")
+
+    while not quit:
+        with open(jsonpath, "r") as f:
+            log = json.load(f)
+        losses = log["losses"]
+        line.set_xdata(range(0, len(losses)))
+        line.set_ydata(losses)
+        ax.relim()
+        ax.autoscale_view()
+        plt.draw()
+        plt.pause(1)
 
 
 @click.group
