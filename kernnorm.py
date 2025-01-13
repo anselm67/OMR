@@ -183,7 +183,7 @@ def parse_all():
 
 DATADIR = Path("/home/anselm/Downloads/GrandPiano/")
 
-
+# TODO Implement command line with click.
 if __name__ == '__main__':
     parse_all()
     # parse_one(Path(
