@@ -70,25 +70,6 @@ def get_target_mask(size: int, device: str = "cpu") -> torch.Tensor:
     return cached_mask
 
 
-def decode(logits: torch.Tensor):
-    probs = F.softmax(logits, dim=-1)
-    tokids = torch.argmax(probs, dim=-1)
-    match tokids.shape:
-        case (batch, length, count):
-            assert count == gp.CHORD_MAX, f"Expecting {
-                gp.CHORD_MAX} tokens per tick."
-            for b in range(batch):
-                print(f"Batch {b}:")
-                for chord in tokids[b]:
-                    texts = gp.decode([int(tokid.item()) for tokid in chord])
-                    print(" ".join(texts))
-        case (lengh, tokens):
-            print("one")
-        case (token):
-            print("token")
-    pass
-
-
 def checkpoint(path: Path, epoch: int, model: nn.Module, opt: torch.optim.Adam):
     print(f"Checkpoint to {path}")
     torch.save({
@@ -200,7 +181,6 @@ def train(num_epoch: int, start_epoch: int = 1, compile: bool = False):
 
             optimizer.zero_grad()
             logits = model(X, y_input, target_mask)
-            # decode(logits)
             loss = loss_fn(
                 logits.reshape(-1, gp.vocab_size),
                 y_expected.flatten()
