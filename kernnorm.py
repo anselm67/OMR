@@ -174,7 +174,6 @@ def parse_all():
     for root, _, filenames in os.walk(DATADIR):
         for filename in filenames:
             path = Path(root) / filename
-            # if filename.name == "min3_down_m-0-4.krn":
             if path.suffix == '.krn' and not path.name.startswith("."):
                 parsed += 1
                 if not parse_one(path):
@@ -186,6 +185,6 @@ DATADIR = Path("/home/anselm/Downloads/GrandPiano/")
 
 
 if __name__ == '__main__':
-    # parse_all()
-    parse_one(Path(
-        '/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata04-3/maj3_down_m-109-113.krn'))
+    parse_all()
+    # parse_one(Path(
+    #     '/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata04-3/maj3_down_m-109-113.krn'))
