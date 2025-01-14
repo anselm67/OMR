@@ -2,7 +2,7 @@
 import json
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple, cast
 
 import click
 import torch
@@ -10,249 +10,229 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchinfo import summary
 
-from grandpiano import Dataset, GrandPiano
+from client import Model
+from grandpiano import DatasetName, GrandPiano
 from model import Config, Translator
-from utils import current_commit
-
-DATADIR = Path("/home/anselm/Downloads/GrandPiano")
-
-gp = GrandPiano(
-    DATADIR,
-    filter=GrandPiano.Filter(
-        max_image_width=1024,
-        max_sequence_length=128
-    )
-)
-
-config = Config(
-    image_height=gp.image_height,
-    max_image_width=gp.ipad_len,                       # TODO
-    max_sequence_height=GrandPiano.CHORD_MAX,
-    max_sequence_width=gp.spad_len,                     # TODO
-    vocab_size=gp.vocab_size,
-)
-
-model = Translator(config)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.0001,
-                             betas=(0.9, 0.98), eps=1e-9)
-start_epoch = 1
-git_commit = current_commit()
-
-MODEL_PATH = Path("untracked") / "checkpoint.pt"
-if MODEL_PATH.exists():
-    obj = torch.load(MODEL_PATH, weights_only=True)
-    start_epoch = obj["epoch"]
-    git_commit = obj["git_commit"]
-    model.load_state_dict(obj["state_dict"])
-    optimizer.load_state_dict(obj['optimizer'])
+from utils import DeviceType, current_commit, get_model_device
 
 
-def load_batch(gp: GrandPiano, dataset_name: Dataset, batch_size: int = 8, device: str = "cpu"):
-    samples = []
-    for _ in range(batch_size):
-        samples.append(gp.next(dataset_name, pad=True, device=device))
-    return (
-        # Images, image lengths, sequences, sequence lengths.
-        torch.stack([sample[0] for sample in samples]).to(device),
-        torch.stack([sample[2] for sample in samples]).to(device),
-    )
+class Train(Model):
 
+    outdir: Path
+    gp: GrandPiano
 
-cached_mask: Optional[torch.Tensor] = None
-cached_mask_size: int = -1
+    @staticmethod
+    def get_train_log_path(outdir: Path, name: str) -> Path:
+        return outdir / f"{name}_log.json"
 
+    @property
+    def epoch(self) -> float:
+        return float(self.training_samples) / self.gp.len("train")
 
-def get_target_mask(size: int, device: str = "cpu") -> torch.Tensor:
-    global cached_mask, cached_mask_size
-    if cached_mask is not None and size == cached_mask_size:
-        return cached_mask
-    else:
-        cached_mask_size = size
-        cached_mask = torch.triu(torch.ones(
-            size, size), diagonal=1).to(torch.bool).to(device)
-    return cached_mask
+    @property
+    def model_path(self) -> Path:
+        return self.get_model_path(self.outdir, self.name)
 
+    @property
+    def optimizer_path(self) -> Path:
+        return self.outdir / f"{self.name}_optimizer.pt"
 
-def checkpoint(path: Path, epoch: int, model: nn.Module, opt: torch.optim.Adam):
-    print(f"Checkpoint to {path}")
-    torch.save({
-        'epoch': epoch,
-        'git_commit': git_commit,
-        'state_dict': model.state_dict(),
-        'optimizer': opt.state_dict()
-    }, path)
+    @property
+    def log_path(self) -> Path:
+        return self.get_train_log_path(self.outdir, self.name)
 
-
-class TrainLog:
-
-    path: Path
-    losses: List[float]
-    vlosses: List[float]
-
-    def __init__(self, path: Path):
-        self.path = path
-        # Loads existing log if available.
-        if path.exists():
-            with open(self.path, "r") as f:
-                obj = json.load(f)
-            self.losses = obj["losses"]
-            self.vlosses = obj["vlosses"]
-        else:
-            self.losses = list([])
-            self.vlosses = list([])
+    def __init__(self, config: Config, dataset: GrandPiano, outdir: Path, name: str):
+        super(Train, self).__init__(config, outdir, name, create=True)
+        self.outdir = outdir
+        self.gp = dataset
 
     def save(self):
-        with open(self.path, "w+") as f:
-            json.dump({
-                "losses": self.losses,
-                "vlosses": self.vlosses,
-                "git_commit": git_commit
-            }, f, indent=4)
+        torch.save({
+            "state_dict": self.model.state_dict(),
+            "training_samples": self.training_samples,
+            "git_hash": self.git_hash,
+        }, self.model_path)
 
-    def log(self, loss: float, vloss: float):
-        self.losses.append(loss)
-        self.vlosses.append(vloss)
-        self.save()
+    def load_optimizer(self, device: DeviceType) -> torch.optim.Adam:
+        optimizer = torch.optim.Adam(
+            self.model.parameters(),
+            lr=0.0001, betas=(0.9, 0.98), eps=1e-9
+        )
+        if self.optimizer_path.exists():
+            obj = torch.load(self.optimizer_path, weights_only=True)
+            if obj["git_hash"] != self.git_hash:
+                raise ValueError(f"Git hash for {self.model_path} and {
+                                 self.optimizer_path} don't match.")
+            optimizer.load_state_dict(obj["state_dict"])
+        # Moves the optimizer to the requested device:
+        for state in optimizer.state.values():
+            for k, v in state.items():
+                if isinstance(v, torch.Tensor):
+                    state[k] = v.to(device)
 
+        return optimizer
 
-def evaluate(loss_fn, batch_size: int, count: int = 5, device: str = "cpu"):
-    model.eval()
-    vlosses = []
+    def save_optimizer(self, optimizer: torch.optim.Adam):
+        torch.save({
+            "state_dict": optimizer.state_dict(),
+            "git_hash": self.git_hash
+        }, self.optimizer_path)
 
-    for _ in range(count):
-        X, y = load_batch(gp, "valid", batch_size, device=device)
+    class Log:
 
-        y_input = y[:, :-1, :]
-        y_expected = y[:, 1:, :]
+        path: Path
+        losses: List[float]
+        valid_losses: List[float]
 
-        target_mask = get_target_mask(y_input.shape[1], device=device)
+        def __init__(self, path: Path):
+            self.path = path
+            self.losses = list([])
+            self.valid_losses = list([])
+            self.load()
 
-        logits = model(X, y_input, target_mask)
+        def load(self):
+            if self.path.exists():
+                with open(self.path, "r") as fp:
+                    obj = json.load(fp)
+                self.losses = obj["losses"]
+                self.valid_losses = obj["valid_losses"]
 
-        loss = loss_fn(
-            logits.reshape(-1, gp.vocab_size),
-            y_expected.flatten()
+        def save(self):
+            with open(self.path, "w+") as fp:
+                json.dump({
+                    "losses": self.losses,
+                    "valid_losses": self.valid_losses,
+                }, fp, indent=4)
+
+        def log(self, loss: float, valid_loss: float):
+            self.losses.append(loss)
+            self.valid_losses.append(valid_loss)
+            self.save()
+
+    def load_log(self):
+        return Train.Log(self.log_path)
+
+    def load_batch(
+        self,
+        dataset_name: DatasetName,
+        batch_size: int,
+        device: DeviceType
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        samples = []
+        for _ in range(batch_size):
+            samples.append(self.gp.next(dataset_name, pad=True, device=device))
+        return (
+            torch.stack([sample[0] for sample in samples]).to(device),
+            torch.stack([sample[2] for sample in samples]).to(device),
         )
 
-        vlosses.append(loss.item())
-    model.train()
-    return torch.tensor(vlosses).mean().item()
+    def evaluate(
+        self,
+        loss_fn: nn.CrossEntropyLoss,
+        batch_size: int,
+        device: DeviceType,
+        count: int = 5,
+    ):
+        self.model.eval()
+        valid_losses = []
 
-
-# @click.command
-# @click.argument("num_epoch", type=int, required=True,)
-def train(num_epoch: int, start_epoch: int = 1, compile: bool = False):
-    """
-        Train the model for NUM_EPOCH epochs, resuming from the last 
-        checkpoint when available.
-    """
-    global model
-
-    log_path = Path("untracked") / "train_log.json"
-    checkpoint_path = Path("untracked") / "checkpoint.pt"
-
-    log = TrainLog(log_path)
-    use_cuda = torch.cuda.is_available()
-    device = 'cuda' if use_cuda else 'cpu'
-
-    batch_size = 16
-
-    if compile:
-        torch.set_float32_matmul_precision('high')
-        model = torch.compile(model)
-
-    # Moves the model and optimizer state to the device.
-    model = model.to(device)
-
-    for state in optimizer.state.values():
-        for k, v in state.items():
-            if isinstance(v, torch.Tensor):
-                state[k] = v.to(device)
-
-    # Runs the trainin loop.
-    batch_per_epoch = gp.len("train") // batch_size
-    loss_fn = nn.CrossEntropyLoss(ignore_index=int(gp.PAD[0]))
-    start_time = time.time()
-    for e in range(start_epoch, start_epoch + num_epoch):
-        for b in range(batch_per_epoch):
-
-            X, y = load_batch(
-                gp, "train", batch_size=batch_size, device=device)
-
+        for _ in range(count):
+            X, y = self.load_batch("valid", batch_size, device)
             y_input = y[:, :-1, :]
             y_expected = y[:, 1:, :]
 
-            target_mask = get_target_mask(y_input.shape[1], device=device)
+            target_mask = self.get_target_mask(y_input.shape[1], device=device)
 
-            optimizer.zero_grad()
-            logits = model(X, y_input, target_mask)
+            logits = self.model(X, y_input, target_mask)
+
             loss = loss_fn(
-                logits.reshape(-1, gp.vocab_size),
+                logits.reshape(-1, self.gp.vocab_size),
                 y_expected.flatten()
             )
-            loss.backward()
-            optimizer.step()
 
-            if b % 50 == 0:
-                done = 100.0 * b / batch_per_epoch
-                now = time.time()
-                vloss = evaluate(loss_fn, batch_size, device=device)
-                print(f"Epoch {e} - {done:2.2f}% done in {
-                      (now-start_time):.2f}s loss: {loss.item():2.2f}, vloss: {vloss:2.2f}")
-                log.log(loss=loss.item(), vloss=vloss)
-                start_time = time.time()
+            valid_losses.append(loss.item())
+        self.model.train()
+        return torch.tensor(valid_losses).mean().item()
 
-            if b % 1000 == 0:
-                checkpoint(checkpoint_path, e, model, optimizer)
+    def train(
+        self,
+        epoch_count: int,
+        batch_size: int,
+        device: Optional[DeviceType] = None
+    ) -> int:
+        """Train the model for an addition count of epochs
+
+        Args:
+            epoch_count (int): Number of additional epochs to train the model for.
+
+            device (DeviceType or None): Device to train on, if None best option is chosen.
+        Returns:
+            int: Total number of samples we've run training for, includes all
+                previous training runs.
+        """
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.model = self.model.to(device)
+        opt = self.load_optimizer(device)
+        log = self.load_log()
+
+        loss_fn = nn.CrossEntropyLoss(ignore_index=GrandPiano.PAD[0])
+        batch_per_epoch = self.gp.len("train") // batch_size
+        start_time = time.time()
+
+        tokens_per_report = 150.0
+        report_ticks = 0
+
+        for _ in range(epoch_count):
+
+            for b in range(batch_per_epoch):
+                X, y = self.load_batch("train", batch_size, device)
+                # Shifts the Ys for training.
+                y_input = y[:, :-1, :]
+                y_expected = y[:, 1:, :]
+
+                target_mask = self.get_target_mask(
+                    y_input.shape[1], device=device)
+
+                opt.zero_grad()
+                logits = self.model(X, y_input, target_mask)
+                loss = loss_fn(
+                    logits.reshape(-1, self.gp.vocab_size),
+                    y_expected.flatten()
+                )
+                loss.backward()
+                opt.step()
+
+                self.training_samples += batch_size
+
+                if int(self.training_samples / tokens_per_report) != report_ticks:
+                    report_ticks = int(
+                        self.training_samples / tokens_per_report)
+                    now = time.time()
+                    valid_loss = self.evaluate(loss_fn, batch_size, device)
+                    print(
+                        f"Epoch {self.epoch:2.2f} " +
+                        f"batch {b}/{batch_per_epoch:,}, " +
+                        f"{self.training_samples / 1000:,.2f}k samples" +
+                        f" in {(now-start_time):.2f}s " +
+                        f"loss: {loss.item():2.2f}, vloss: {valid_loss:2.2f}"
+                    )
+                    log.log(loss=loss.item(), valid_loss=valid_loss)
+                    start_time = time.time()
+
+                    if report_ticks % 10 == 0:
+                        # Checkpoints the model and the optimizer state.
+                        self.save()
+                        self.save_optimizer(opt)
+            print(f"Epoch {_} fnished.")
+        return self.training_samples
 
 
-def greedy_decode(
-    source: torch.Tensor,
-    max_len: int, start_symbol: int,
-    device: str = "cpu"
-) -> torch.Tensor:
-    source_key_padding_mask = (source == GrandPiano.PAD[0])[:, :, 0]
-    memory = model.encode(
-        source,
-        src_key_padding_mask=source_key_padding_mask,
-    ).to(device)
-    ys = torch.full(
-        (1, gp.CHORD_MAX),
-        fill_value=start_symbol
-    ).to(device)
-    for i in range(max_len-1):
-        target_mask = get_target_mask(ys.shape[0], device=device)
-        out = model.decode(ys.unsqueeze(0), memory, target_mask)
-        out = out.transpose(0, 1)
-        prob = model.generator(out[:, -1])
-        prob = prob.view(-1, gp.CHORD_MAX, gp.vocab_size)
-        token = torch.argmax(prob[-1:, :, :], dim=2)
-        ys = torch.cat([ys, token], dim=0)
-        if token[0, 0] == gp.EOS[0]:
-            break
-    return ys
-
-
-@click.command
-@click.argument("path", type=click.Path(file_okay=True))
-def predict(path: Path):
-    """
-
-        Translates the given PATH image file into kern-ike notation.
-    """
-    image, _ = gp.load_image(path, pad=True)
-    if image is None:
-        raise FileNotFoundError(f"File {path} not found, likely too wide.")
-
-    chords = greedy_decode(
-        image.unsqueeze(0), gp.spad_len, start_symbol=gp.SOS[0])
-    for chord in chords:
-        texts = gp.decode([int(id.item())
-                          for id in chord if id != GrandPiano.SIL[0]])
-        print("\t".join(texts))
-
-    pass
-
-
-if __name__ == '__main__':
-    train(10, start_epoch=start_epoch)
+@click.command()
+@click.argument("epoch_count", type=int, required=True)
+@click.option("-batch-size", "-b", "batch_size", type=int, default=16)
+@click.pass_context
+def train(ctx, epoch_count: int, batch_size: int):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    context.require_train().train(epoch_count, batch_size, device)

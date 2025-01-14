@@ -12,10 +12,11 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "args": [
-                "load", "--pad", "/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata32-1/min3_down_m-136-140.tokens"
+                // "load", "--pad", "/home/anselm/Downloads/GrandPiano/beethoven/piano-sonatas/sonata32-1/min3_down_m-136-140.tokens"
                 // "histo"
                 // "make-vocab"
                 // "stats"
+                "-n", "test", "train", "1"
             ]
         }
     ]

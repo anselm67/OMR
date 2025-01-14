@@ -15,7 +15,9 @@ import torch.nn.functional as F
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 
-Dataset: TypeAlias = Literal["train", "valid", "all"]
+from utils import DeviceType
+
+DatasetName = Literal["train", "valid", "all"]
 
 
 class FixedHeightResize(v2.Transform):
@@ -36,13 +38,12 @@ class FixedHeightResize(v2.Transform):
 
 
 class GrandPiano:
-    CHORD_MAX = 12          # Maximum number of concurrent notes in dataset.
 
     PAD = (0, "PAD")        # Padding for image and sequence length value.
     UNK = (1, "UNK")        # Unknown sequence token.
     SOS = (2, "SOS")        # Start of sequence token.
     EOS = (3, "EOS")        # End of sequence token.
-    SIL = (4, "SIL")        # Chord padding to CHORD_MAX.
+    SIL = (4, "SIL")        # Chord padding to Stats.max_chord.
     RESERVED_TOKENS = [PAD, UNK, SOS, EOS, SIL]
 
     @dataclass
@@ -59,6 +60,7 @@ class GrandPiano:
     # TODO Have an option to the stats command to generate this.
     @dataclass
     class Stats:
+        max_chord: int = 12
         image_height: int = 256
         max_image_width: int = 3058
         image_mean: float = 22.06
@@ -83,7 +85,7 @@ class GrandPiano:
     filter: Optional[Filter]
 
     @property
-    def vocab_size(self):
+    def vocab_size(self) -> int:
         return len(self.tok2i)
 
     def __init__(self,
@@ -116,7 +118,9 @@ class GrandPiano:
         self.list(create=True)
         self.load_vocab(create=True)
 
-    def list(self, create: bool = False, refresh: bool = False) -> Tuple[int, int]:
+    def list(
+        self, create: bool = False, refresh: bool = False, split: float = 0.9
+    ) -> Tuple[int, int]:
         """
         Lists all samples available in the datadir, and caches the train/valid split.
 
@@ -143,7 +147,7 @@ class GrandPiano:
                     if path.suffix == '.tokens' and path.with_suffix(".jpg").exists():
                         data.append(path.with_suffix(""))
             random.shuffle(data)
-            train_size = int(len(data) * 0.85)
+            train_size = int(len(data) * split)
             self.train_data = data[:train_size]
             self.valid_data = data[train_size:]
             with open(list_path, "wb+") as f:
@@ -206,8 +210,9 @@ class GrandPiano:
         self,
         path: Path,
         pad: bool = False,
-        device: str = "cpu"
+        device: Optional[DeviceType] = None
     ) -> Tuple[Optional[torch.Tensor], int]:
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         with open(path, "r") as file:
             records = list(file)
             width = len(records)
@@ -217,7 +222,7 @@ class GrandPiano:
             assert len(records)+2 <= length, f"{path} length {
                 len(records)} exceeds padding length {self.spad_len}"
             tensor = torch.full(
-                (length, self.CHORD_MAX), self.PAD[0]).to(device)
+                (length, self.Stats.max_chord), self.PAD[0]).to(device)
             tensor[0, :], tensor[1+width, :] = self.SOS[0], self.EOS[0]
             for idx, record in enumerate(records):
                 row = torch.Tensor([
@@ -231,8 +236,9 @@ class GrandPiano:
         return [self.i2tok.get(token, "UNK") for token in tokens]
 
     def load_image(
-        self, path: Path, norm: bool = True, pad: bool = False, device: str = "cpu"
+        self, path: Path, norm: bool = True, pad: bool = False, device: Optional[DeviceType] = None
     ) -> Tuple[Optional[torch.Tensor], int]:
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         image = decode_image(Path(path).as_posix()).to(device)
         image = (self.transform_and_norm if norm else self.transform)(image)
         image = image.squeeze(0).permute(1, 0)
@@ -248,7 +254,7 @@ class GrandPiano:
         tensor[1:1+width, :] = image
         return tensor, width+2
 
-    def get_dataset(self, dataset_name: Dataset) -> List[Path]:
+    def get_dataset(self, dataset_name: DatasetName) -> List[Path]:
         match dataset_name:
             case "train":
                 return self.train_data
@@ -259,14 +265,14 @@ class GrandPiano:
             case _:
                 raise ValueError(f"Invalid dataset '{dataset}'.")
 
-    def len(self, dataset_name: Dataset) -> int:
+    def len(self, dataset_name: DatasetName) -> int:
         return len(self.get_dataset(dataset_name))
 
     def next(
         self,
-        dataset_name: Dataset,
+        dataset_name: DatasetName,
         pad: bool = False,
-        device: str = "cpu"
+        device: Optional[DeviceType] = None
     ) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
         dataset = self.get_dataset(dataset_name)
         while True:
@@ -285,7 +291,7 @@ class GrandPiano:
         _, length = gp.load_sequence(path)
         return length
 
-    def sequences_length(self, dataset_name: Dataset = "all") -> torch.Tensor:
+    def sequences_length(self, dataset_name: DatasetName = "all") -> torch.Tensor:
         dataset = self.get_dataset(dataset_name)
         stats = map(GrandPiano.sequence_length, [
             (self, path.with_suffix(".tokens")) for path in dataset])
@@ -300,14 +306,14 @@ class GrandPiano:
         else:
             return None
 
-    def images_length(self, dataset_name: Dataset = "all") -> torch.Tensor:
+    def images_length(self, dataset_name: DatasetName = "all") -> torch.Tensor:
         dataset = self.get_dataset(dataset_name)
         stats = map(GrandPiano.image_stats, [
             (self, path.with_suffix(".jpg")) for path in dataset])
         stats = [stat for stat in stats if stat is not None]
         return torch.Tensor([l for l, m, s in stats])
 
-    def images_stats(self, dataset_name: Dataset = "all") -> Dict[str, str]:
+    def images_stats(self, dataset_name: DatasetName = "all") -> Dict[str, str]:
         dataset = self.get_dataset(dataset_name)
         stats = map(GrandPiano.image_stats, [
             (self, path.with_suffix(".jpg")) for path in dataset])
@@ -345,38 +351,47 @@ class GrandPiano:
         } | image_stats
 
 
-@click.command
+@click.command()
 @click.pass_context
 def make_vocab(ctx):
     """
         Creates the vocabulary file 'vocab.pickle' for the DATASET.
     """
-    gp = cast(GrandPiano, ctx.obj)
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    gp = context.require_dataset()
     gp.create_vocab()
 
 
-@click.command
+@click.command()
+@click.option("--split", type=click.FloatRange(0.0, 1.0), default=0.9,
+              help="Split train / valid data in this ratio.")
 @click.pass_context
-def refresh_list(ctx):
+def refresh_list(ctx, split: float):
+    """Splits the dataset into train abd valid, and caches it.
     """
-        Creates the vocabulary file 'vocab.pickle' for the DATASET.
-    """
-    gp = cast(GrandPiano, ctx.obj)
-    gp.list(refresh=True)
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    gp = context.require_dataset()
+    gp.list(refresh=True, split=split)
 
 
-@click.command
+@click.command()
 @click.pass_context
 def stats(ctx):
+    """Computes various statistics on the dataset.
+
+    Some of these statistics should be incorporated into the code via
+    the Stats dataclass.
     """
-        Creates the vocabulary file 'vocab.pickle' for the DATASET.
-    """
-    gp = cast(GrandPiano, ctx.obj)
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    gp = context.require_dataset()
     for key, value in gp.stats().items():
         print(f"{key:<20}: {value}")
 
 
-@click.command
+@click.command()
 @click.pass_context
 def histo(ctx):
     """
@@ -384,7 +399,9 @@ def histo(ctx):
         Plots the histogram of sequence and image lengths.
 
     """
-    gp = cast(GrandPiano, ctx.obj)
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    gp = context.require_dataset()
     sequence_lengths = gp.sequences_length()
     image_lengths = gp.images_length()
     fig, (ax1, ax2) = plt.subplots(2, 1)
@@ -396,7 +413,7 @@ def histo(ctx):
     plt.show()
 
 
-@click.command
+@click.command()
 @click.argument("path",
                 type=click.Path(file_okay=True),
                 required=True)
@@ -409,7 +426,9 @@ def load(ctx, path: Path, pad: bool = False):
 
         PATH can be either .tokens or a .jpg file, and will be tokenized accordingly.
     """
-    gp = cast(GrandPiano, ctx.obj)
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    gp = context.require_dataset()
     match Path(path).suffix:
         case ".tokens":
             tensor = gp.load_sequence(path, pad=pad)
