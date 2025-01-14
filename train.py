@@ -179,7 +179,7 @@ class Train(Model):
         batch_per_epoch = self.gp.len("train") // batch_size
         start_time = time.time()
 
-        tokens_per_report = 150.0
+        tokens_per_report = 500.0
         report_ticks = 0
 
         for _ in range(epoch_count):
