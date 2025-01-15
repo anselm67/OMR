@@ -3,6 +3,7 @@ from typing import Dict, Optional, cast
 
 import click
 import torch
+from torchinfo import summary
 
 from grandpiano import GrandPiano
 from model import Config, Translator
@@ -100,3 +101,25 @@ def predict(ctx, path: Path):
     """Translates the given PATH image file into kern-ike notation.
     """
     context.require_client().predict(context.require_dataset(), path)
+
+
+@click.command()
+@click.option("--summary/--no-summary", "do_summary", default=True,
+              help="Displays / don't display  the full model summary.")
+@click.option("--config/--no-config", "do_config", default=True,
+              help="Displays / don't display the full model config.")
+@click.pass_context
+def infos(ctx, do_config: bool, do_summary: bool):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    """Display infos and summary about the model.
+    """
+    client = context.require_client()
+    print(f"git hash: {client.git_hash}")
+    print(f"Training samples: {client.training_samples:,}")
+    if do_config:
+        print("Config:")
+        for key, value in client.config.__dict__.items():
+            print(f"\t{key:<20}: {value}")
+    if do_summary:
+        summary(client.model)

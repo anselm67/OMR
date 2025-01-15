@@ -223,7 +223,6 @@ class Train(Model):
                         # Checkpoints the model and the optimizer state.
                         self.save()
                         self.save_optimizer(opt)
-            print(f"Epoch {_} fnished.")
         return self.training_samples
 
 

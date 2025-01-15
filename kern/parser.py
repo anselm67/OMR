@@ -1,7 +1,8 @@
 # https://www.humdrum.org/guide/
 # Formal syntax: https://www.humdrum.org/guide/ch05/
 # Note tokens: https://www.humdrum.org/Humdrum/representations/kern.html#Note%20Tokens
-
+# TODO Handle < and > as in:
+# /home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-97-100.krn
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path

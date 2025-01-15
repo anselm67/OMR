@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from click_context import ClickContext
-from client import predict
+from client import infos, predict
 from grandpiano import histo, load, make_vocab, refresh_list, stats
 from train import train
 
@@ -82,6 +82,7 @@ cli.add_command(histo)
 cli.add_command(plot)
 cli.add_command(predict)
 cli.add_command(train)
+cli.add_command(infos)
 
 if __name__ == '__main__':
     cli()
