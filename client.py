@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Optional, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import click
 import torch
@@ -59,6 +59,54 @@ class Model:
             self.target_mask_cache[size] = mask
         return mask
 
+    def beam_decode(self, gp: GrandPiano, source: torch.Tensor) -> torch.Tensor:
+        top_k = 3
+        beam_width = 6
+
+        self.model.eval()
+        source_key_padding_mask = (source == GrandPiano.PAD[0])[:, :, 0]
+        memory = self.model.encode(
+            source,
+            src_key_padding_mask=source_key_padding_mask.to(self.device)
+        )
+        ys = torch.full(
+            (gp.spad_len, gp.Stats.max_chord), fill_value=GrandPiano.PAD[0]
+        ).to(self.device)
+        ys[0, :] = GrandPiano.SOS[0]
+
+        beams: List[Tuple[torch.Tensor, float]] = [(ys, 0.0)]
+        done:  List[Tuple[torch.Tensor, float]] = []
+        for idx in range(1, gp.spad_len-1):
+            candidates:  List[Tuple[torch.Tensor, float]] = []
+
+            for seq, score in beams:
+
+                target_mask = self.get_target_mask(idx)
+                out = self.model.decode(
+                    seq[:idx, :].unsqueeze(0), memory, target_mask)
+                out = out.transpose(0, 1)
+                out = self.model.generator(out[:, -1])
+                out = out.view(-1, gp.Stats.max_chord, gp.vocab_size)
+                prob = torch.nn.functional.log_softmax(out, dim=-1)
+
+                log_probs, tokens = torch.topk(prob[-1, :, :], top_k)
+                for i in range(top_k):
+                    candidate = seq.clone()
+                    candidate[idx, :] = tokens[:, i]
+                    log_prob = torch.sum(log_probs[:, i]).item()
+                    if tokens[i, 0] == gp.EOS[0]:
+                        done.append((candidate, score + log_prob))
+                    else:
+                        candidates.append(
+                            (candidate, score + log_prob))
+            beams = sorted(candidates, key=lambda x: x[1], reverse=True)
+            beams = beams[:beam_width]
+
+            if len(done) >= beam_width:
+                break
+
+        return max(done, key=lambda x: x[1])[0] if done else beams[0][0]
+
     def greedy_decode(self, gp: GrandPiano, source: torch.Tensor) -> torch.Tensor:
         self.model.eval()
         source_key_padding_mask = (source == GrandPiano.PAD[0])[:, :, 0]
@@ -76,6 +124,8 @@ class Model:
                 ys[:idx, :].unsqueeze(0), memory, target_mask)
             out = out.transpose(0, 1)
             prob = self.model.generator(out[:, -1])
+            # As we're not runing through softmax this isn't really a probability,
+            # still fine as we're only interested in argmax.
             prob = prob.view(-1, gp.Stats.max_chord, gp.vocab_size)
             token = torch.argmax(prob[-1:, :, :], dim=2)
             ys[idx, :] = token
