@@ -25,3 +25,11 @@ def current_commit() -> str:
     except subprocess.CalledProcessError as e:
         print(f"Error retrieving commit hash: {e}")
         return "unknown-commit"
+
+
+def compare_sequences(yhat: torch.Tensor, y: torch.Tensor) -> float:
+    from grandpiano import GrandPiano
+
+    wrong = torch.sum(y != yhat).item()
+    total = torch.sum(y != GrandPiano.PAD[0]).item()
+    return 1.0 - wrong / total

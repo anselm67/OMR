@@ -7,7 +7,7 @@ from torchinfo import summary
 
 from grandpiano import GrandPiano
 from model import Config, Translator
-from utils import DeviceType, current_commit
+from utils import DeviceType, compare_sequences, current_commit
 
 
 class Model:
@@ -137,7 +137,8 @@ class Model:
         self, gp: GrandPiano,
         source: torch.Tensor,
         target: Optional[torch.Tensor],
-        do_display: bool = True
+        do_display: bool = True,
+        use_beam: bool = False
     ) -> float:
         """Translated the image given by PATH to kern-like tokens.
 
@@ -147,24 +148,21 @@ class Model:
             target (torch.Tensor, optional): Compute and return accuracy against this 
                 given target. Defaults to None.
             do_display (bool, optional): Displays the computed tokens. Defaults to True.
+            use_beam (bool, optional): Use beam decoding rather than greedy. Defaults to False.
         """
         self.model.eval()
         if source is None:
             raise FileNotFoundError(f"File {path} not found, likely too wide.")
 
-        chords = self.greedy_decode(gp, source.unsqueeze(0))
+        if use_beam:
+            chords = self.greedy_decode(gp, source.unsqueeze(0))
+        else:
+            chords = self.beam_decode(gp, source.unsqueeze(0))
         accuracy = 0.0
         if target is not None:
-            wrong = torch.sum(target != chords).item()
-            total = torch.sum(target != gp.PAD[0]).item()
-            accuracy = 1.0 - wrong / total
+            accuracy = compare_sequences(chords, target)
         if do_display:
-            for chord in chords:
-                if any([id != GrandPiano.PAD[0] for id in chord]):
-                    texts = gp.decode([
-                        int(id.item()) for id in chord if id != GrandPiano.SIL[0]
-                    ])
-                    print("\t".join([text for text in texts if text]))
+            gp.display(chords)
         return accuracy
 
 
@@ -172,8 +170,10 @@ class Model:
 @click.argument("count", type=int)
 @click.option("--display/--no-display", "do_display", default=True,
               help="Displays / don't display the computed sequence.")
+@click.option("--beam-decoding", "use_beam", is_flag=True, default=False,
+              help="Use beam decoding rather than greedy.")
 @click.pass_context
-def random_check(ctx, count: int, do_display: bool):
+def random_check(ctx, count: int, do_display: bool, use_beam: bool):
     """Test model accuracy over randomly picked samples from the validation dataset.
 
     Args:
@@ -187,7 +187,10 @@ def random_check(ctx, count: int, do_display: bool):
         for _ in range(count):
             path, image, _, sequence, _ = context.require_dataset().next("valid", pad=True)
             accuracy = context.require_client().predict(
-                context.require_dataset(), image, sequence, do_display=do_display)
+                context.require_dataset(),
+                image, sequence,
+                do_display=do_display, use_beam=use_beam
+            )
             accuracies.append(accuracy)
             print(f"{100.0 * accuracy:<8.2f}{path}")
     print(f"Average: {100.0 * sum(accuracies) / len(accuracies):2.2f}")
@@ -199,8 +202,10 @@ def random_check(ctx, count: int, do_display: bool):
               help="Computes accuracy against .tokens file.")
 @click.option("--display/--no-display", "do_display", default=True,
               help="Displays / don't display the computed sequence.")
+@click.option("--beam-decoding", "use_beam", is_flag=True, default=False,
+              help="Use beam decoding rather than greedy.")
 @click.pass_context
-def predict(ctx, path: Path, do_display: bool, do_accuracy: bool):
+def predict(ctx, path: Path, do_display: bool, do_accuracy: bool, use_beam: bool):
     """Translates the given PATH image file into kern-like notation.
 
     Args:
@@ -223,7 +228,10 @@ def predict(ctx, path: Path, do_display: bool, do_accuracy: bool):
         target, _ = gp.load_sequence(path.with_suffix(".tokens"), pad=True)
     with torch.no_grad():
         accuracy = context.require_client().predict(
-            context.require_dataset(), source, target, do_display=do_display)
+            context.require_dataset(),
+            source, target,
+            do_display=do_display, use_beam=use_beam
+        )
         if do_accuracy:
             print(f"Accuracy: {100.0 * accuracy:2.2f}")
 

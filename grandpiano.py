@@ -236,6 +236,27 @@ class GrandPiano:
             tokens = [int(id.item()) for id in tokens]
         return [self.i2tok.get(token, "UNK") for token in tokens]
 
+    def display(self, seq: torch.Tensor):
+        """Displays a sequence, that is a Tensor representing a sequence of chords.
+
+        Each chord is displayed as a line.
+
+        Args:
+            seq (torch.Tensor): Tensor of shape (any, Stats.max_chord)
+        """
+        for chord in seq:
+            # Skips SOS and EOS.
+            if all([id.item() == GrandPiano.SOS[0] for id in chord]):
+                continue
+            if all([id.item() == GrandPiano.EOS[0] for id in chord]):
+                continue
+            # Otherwise, displays anything but PAD.
+            if any([id != GrandPiano.PAD[0] for id in chord]):
+                texts = self.decode([
+                    int(id.item()) for id in chord if id != GrandPiano.SIL[0]
+                ])
+                print("\t".join([text for text in texts if text]))
+
     def load_image(
         self, path: Path, norm: bool = True, pad: bool = False, device: Optional[DeviceType] = None
     ) -> Tuple[Optional[torch.Tensor], int]:
