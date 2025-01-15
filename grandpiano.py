@@ -6,12 +6,11 @@ import random
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Tuple, TypeAlias, cast
+from typing import Dict, List, Literal, Optional, Tuple, Union, cast
 
 import click
 import matplotlib.pyplot as plt
 import torch
-import torch.nn.functional as F
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 
@@ -232,7 +231,9 @@ class GrandPiano:
                 tensor[1+idx, :len(row)] = row
         return tensor, width+2
 
-    def decode(self, tokens: List[int]):
+    def decode(self, tokens: Union[torch.Tensor, List[int]]):
+        if isinstance(tokens, torch.Tensor):
+            tokens = [int(id.item()) for id in tokens]
         return [self.i2tok.get(token, "UNK") for token in tokens]
 
     def load_image(
