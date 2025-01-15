@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 from client import Model
 from grandpiano import GrandPiano
