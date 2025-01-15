@@ -10,7 +10,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from click_context import ClickContext
-from client import infos, predict
+from client import infos, predict, random_check
 from grandpiano import histo, load, make_vocab, refresh_list, stats
 from train import train
 
@@ -74,15 +74,20 @@ def cli(ctx: click.Context, dataset_path: Path, model_path: Path, model_name: st
     ctx.obj = ClickContext(Path(dataset_path), Path(model_path), model_name)
 
 
+# GrandPiano dataset commands:
 cli.add_command(make_vocab)
 cli.add_command(stats)
 cli.add_command(load)
 cli.add_command(refresh_list)
 cli.add_command(histo)
-cli.add_command(plot)
-cli.add_command(predict)
-cli.add_command(train)
-cli.add_command(infos)
 
+# Training commands:
+cli.add_command(plot)
+cli.add_command(train)
+
+# Client commands:
+cli.add_command(infos)
+cli.add_command(predict)
+cli.add_command(random_check)
 if __name__ == '__main__':
     cli()

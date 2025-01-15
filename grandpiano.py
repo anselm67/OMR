@@ -248,7 +248,8 @@ class GrandPiano:
         length = self.ipad_len if pad else width+2
         assert width+2 <= length, f"{
             path} width {width} exceeds padding width {self.ipad_len}"
-        tensor = torch.full((length, height), self.PAD[0], dtype=torch.float32)
+        tensor = torch.full(
+            (length, height), self.PAD[0], dtype=torch.float32).to(device)
         tensor[0, :], tensor[1+width,
                              :] = float(self.SOS[0]), float(self.EOS[0])
         tensor[1:1+width, :] = image
@@ -273,7 +274,7 @@ class GrandPiano:
         dataset_name: DatasetName,
         pad: bool = False,
         device: Optional[DeviceType] = None
-    ) -> Tuple[torch.Tensor, int, torch.Tensor, int]:
+    ) -> Tuple[Path, torch.Tensor, int, torch.Tensor, int]:
         dataset = self.get_dataset(dataset_name)
         while True:
             position = random.randint(0, len(dataset) - 1)
@@ -283,7 +284,7 @@ class GrandPiano:
             sequence, length = self.load_sequence(
                 path.with_suffix(".tokens"), pad=pad, device=device)
             if image is not None and sequence is not None:
-                return (image, width, sequence, length)
+                return (path, image, width, sequence, length)
 
     @ staticmethod
     def sequence_length(args: Tuple['GrandPiano', Path]) -> int:

@@ -13,7 +13,6 @@ from torchinfo import summary
 from client import Model
 from grandpiano import DatasetName, GrandPiano
 from model import Config, Translator
-from utils import DeviceType, current_commit, get_model_device
 
 
 class Train(Model):
@@ -53,7 +52,7 @@ class Train(Model):
             "git_hash": self.git_hash,
         }, self.model_path)
 
-    def load_optimizer(self, device: DeviceType) -> torch.optim.Adam:
+    def load_optimizer(self) -> torch.optim.Adam:
         optimizer = torch.optim.Adam(
             self.model.parameters(),
             lr=0.0001, betas=(0.9, 0.98), eps=1e-9
@@ -68,7 +67,7 @@ class Train(Model):
         for state in optimizer.state.values():
             for k, v in state.items():
                 if isinstance(v, torch.Tensor):
-                    state[k] = v.to(device)
+                    state[k] = v.to(self.device)
 
         return optimizer
 
@@ -116,40 +115,54 @@ class Train(Model):
         self,
         dataset_name: DatasetName,
         batch_size: int,
-        device: DeviceType
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         samples = []
         for _ in range(batch_size):
-            samples.append(self.gp.next(dataset_name, pad=True, device=device))
+            samples.append(self.gp.next(
+                dataset_name, pad=True, device=self.device))
         return (
-            torch.stack([sample[0] for sample in samples]).to(device),
-            torch.stack([sample[2] for sample in samples]).to(device),
+            torch.stack([sample[1] for sample in samples]).to(self.device),
+            torch.stack([sample[2] for sample in samples]).to(self.device),
         )
+
+    def one_batch(
+        self, dataset_name: DatasetName, batch_size: int
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Runs one batch of data through the model.
+
+        Args:
+            dataset_name (DatasetName): Name of the dataset, e.g. "train", "valid".
+            batch_size (int): Batch size, as expected.
+            device (DeviceType): Device to run on.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: A tuple of logits and expected output symbols.
+        """
+        X, y = self.load_batch(dataset_name, batch_size)
+        y_input = y[:, :-1, :]
+        y_expected = y[:, 1:, :]
+
+        target_mask = self.get_target_mask(y_input.shape[1])
+
+        logits = self.model(X, y_input, target_mask)
+
+        return logits, y_expected
 
     def evaluate(
         self,
         loss_fn: nn.CrossEntropyLoss,
         batch_size: int,
-        device: DeviceType,
         count: int = 5,
     ):
         self.model.eval()
         valid_losses = []
 
         for _ in range(count):
-            X, y = self.load_batch("valid", batch_size, device)
-            y_input = y[:, :-1, :]
-            y_expected = y[:, 1:, :]
-
-            target_mask = self.get_target_mask(y_input.shape[1], device=device)
-
-            logits = self.model(X, y_input, target_mask)
-
+            logits, y_expected = self.one_batch("valid", batch_size)
             loss = loss_fn(
                 logits.reshape(-1, self.gp.vocab_size),
                 y_expected.flatten()
             )
-
             valid_losses.append(loss.item())
         self.model.train()
         return torch.tensor(valid_losses).mean().item()
@@ -158,7 +171,6 @@ class Train(Model):
         self,
         epoch_count: int,
         batch_size: int,
-        device: Optional[DeviceType] = None
     ) -> int:
         """Train the model for an addition count of epochs
 
@@ -170,9 +182,8 @@ class Train(Model):
             int: Total number of samples we've run training for, includes all
                 previous training runs.
         """
-        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = self.model.to(device)
-        opt = self.load_optimizer(device)
+        self.model.train()
+        opt = self.load_optimizer()
         log = self.load_log()
 
         loss_fn = nn.CrossEntropyLoss(ignore_index=GrandPiano.PAD[0])
@@ -185,16 +196,8 @@ class Train(Model):
         for _ in range(epoch_count):
 
             for b in range(batch_per_epoch):
-                X, y = self.load_batch("train", batch_size, device)
-                # Shifts the Ys for training.
-                y_input = y[:, :-1, :]
-                y_expected = y[:, 1:, :]
-
-                target_mask = self.get_target_mask(
-                    y_input.shape[1], device=device)
-
                 opt.zero_grad()
-                logits = self.model(X, y_input, target_mask)
+                logits, y_expected = self.one_batch("train", batch_size)
                 loss = loss_fn(
                     logits.reshape(-1, self.gp.vocab_size),
                     y_expected.flatten()
@@ -208,7 +211,7 @@ class Train(Model):
                     report_ticks = int(
                         self.training_samples / tokens_per_report)
                     now = time.time()
-                    valid_loss = self.evaluate(loss_fn, batch_size, device)
+                    valid_loss = self.evaluate(loss_fn, batch_size)
                     print(
                         f"Epoch {self.epoch:2.2f} " +
                         f"batch {b}/{batch_per_epoch:,}, " +
@@ -234,4 +237,4 @@ def train(ctx, epoch_count: int, batch_size: int):
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    context.require_train().train(epoch_count, batch_size, device)
+    context.require_train().train(epoch_count, batch_size)

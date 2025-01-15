@@ -25,13 +25,3 @@ def current_commit() -> str:
     except subprocess.CalledProcessError as e:
         print(f"Error retrieving commit hash: {e}")
         return "unknown-commit"
-
-
-def get_model_device(model: torch.nn.Module) -> Optional[DeviceType]:
-    """Get the device of a PyTorch model."""
-    # Get the first parameter or buffer to determine the device
-    for param in model.parameters():
-        return param.device
-    for buffer in model.buffers():
-        return buffer.device
-    return None  # If the model has no parameters or buffers
