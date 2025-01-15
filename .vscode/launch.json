@@ -17,7 +17,8 @@
                 // "make-vocab"
                 // "stats"
                 // "-n", "test", "train", "1"
-                "-n", "serious", "predict", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
+                // "-n", "serious", "predict", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
+                "tokenize", "--no-output", "/home/anselm/Downloads/GrandPiano/chopin/preludes/prelude28-20/original_m-8-12.krn"
             ]
         }
     ]
