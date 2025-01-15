@@ -122,7 +122,7 @@ class Train(Model):
                 dataset_name, pad=True, device=self.device))
         return (
             torch.stack([sample[1] for sample in samples]).to(self.device),
-            torch.stack([sample[2] for sample in samples]).to(self.device),
+            torch.stack([sample[3] for sample in samples]).to(self.device),
         )
 
     def one_batch(

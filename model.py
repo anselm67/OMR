@@ -1,6 +1,8 @@
 
 
+import math
 from dataclasses import dataclass
+from typing import Dict
 
 import torch
 import torch.nn as nn
@@ -32,59 +34,56 @@ class Config:
     dropout = 0.1
 
 
-class SourceEmbedder(nn.Module):
+class Embedder(nn.Module):
 
     net: nn.Sequential
-    pos: nn.Embedding
+    hpos_cache: Dict[int, torch.Tensor] = {}
 
-    def __init__(self, config: Config):
-        super(SourceEmbedder, self).__init__()
+    @staticmethod
+    def generate_sinusoidal_embeddings(length, dim):
+        pos = torch.arange(length).unsqueeze(1)  # (length, 1)
+        i = torch.arange(dim // 2).unsqueeze(0)  # (1, dim // 2)
+        angle_rates = 1 / (10000 ** (2 * i / dim))
+        embeddings = torch.zeros((length, dim))
+        embeddings[:, 0::2] = torch.sin(pos * angle_rates)  # Even indices
+        embeddings[:, 1::2] = torch.cos(pos * angle_rates)  # Odd indices
+        return embeddings
+
+    def __init__(self, max_width: int, input_height: int, reduction_dims: int, embed_size: int):
+        super(Embedder, self).__init__()
         self.net = nn.Sequential(
-            nn.Linear(config.image_height, config.image_reducer),
+            nn.Linear(input_height, reduction_dims),
             nn.GELU(),
-            nn.Linear(config.image_reducer, config.embed_size)
+            nn.Linear(reduction_dims, embed_size)
         )
-        self.pos = nn.Embedding(config.max_image_width, config.embed_size)
+        pe = torch.zeros(1, max_width, embed_size, dtype=torch.float)
+        position = torch.arange(
+            0, max_width, dtype=torch.float).unsqueeze(1)  # [1024, 1]
+        div_term = torch.exp(torch.arange(0, embed_size, 2).float(
+        ) * (-math.log(10000.0) / embed_size))  # [256]
+        pe[:, :, 0::2] = torch.sin(position * div_term)  # Even indices
+        pe[:, :, 1::2] = torch.cos(position * div_term)  # Odd indices
+        # Save as buffer        # Create a matrix of shape (max_len, d_model) to hold the positional encodings
+        self.register_buffer('pe', pe)
 
-    # TODO Check if it's ok to embed a padded sequence.
-    def forward(self, x):
-        width = x.shape[-2]
-        tok = self.net(x)
-        return tok + self.pos(torch.arange(width, device=x.device))
-
-
-class TargetEmbedder(nn.Module):
-
-    net: nn.Sequential
-    hpos: nn.Embedding
-    vpos: nn.Embedding
-
-    def __init__(self, config: Config):
-        super(TargetEmbedder, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(config.max_sequence_height, config.sequence_reducer),
-            nn.GELU(),
-            nn.Linear(config.sequence_reducer, config.embed_size)
-        )
-        # Position is
-        self.hpos = nn.Embedding(config.max_sequence_width, config.embed_size)
-
-    # TODO Check if it's ok to embed a padded sequence.
-    def forward(self, x):
-        width, height = x.shape[-2], x.shape[-1]
-        tok = self.net(x.to(torch.float))
-        return (
-            tok +
-            self.hpos(torch.arange(width, device=x.device))
-        )
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x.to(torch.float)) + self.pe
 
 
 class Translator(nn.Module):
 
     def __init__(self, config: Config):
         super(Translator, self).__init__()
-        self.source_embedder = SourceEmbedder(config)
-        self.target_embedder = TargetEmbedder(config)
+        self.source_embedder = Embedder(
+            config.max_image_width,
+            config.image_height,
+            config.image_reducer, config.embed_size
+        )
+        self.target_embedder = Embedder(
+            config.max_sequence_width - 1,
+            config.max_sequence_height,
+            config.sequence_reducer, config.embed_size
+        )
         self.transformer = nn.Transformer(
             d_model=config.embed_size,
             nhead=config.num_head,

@@ -54,7 +54,7 @@ class GrandPiano:
             return width < self.max_image_width
 
         def accept_sequence(self, length: int) -> bool:
-            return length < self.max_sequence_length
+            return length <= self.max_sequence_length
 
     # TODO Have an option to the stats command to generate this.
     @dataclass
@@ -103,7 +103,7 @@ class GrandPiano:
             if filter.max_image_width > 0:
                 self.ipad_len = filter.max_image_width
             if filter.max_sequence_length > 0:
-                self.spad_len = filter.max_sequence_length
+                self.spad_len = 1 + filter.max_sequence_length
         # Initializes image transforms, with/without norming.
         self.transform = v2.Compose([
             v2.Grayscale(),
