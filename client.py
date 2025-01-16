@@ -114,27 +114,71 @@ class Model:
             source,
             src_key_padding_mask=source_key_padding_mask.to(self.device)
         )
-        ys = torch.full(
+        yhat = torch.full(
             (gp.spad_len, gp.Stats.max_chord), fill_value=GrandPiano.PAD[0]
         ).to(self.device)
-        ys[0, :] = GrandPiano.SOS[0]
+        yhat[0, :] = GrandPiano.SOS[0]
         for idx in range(1, gp.spad_len-1):
             target_mask = self.get_target_mask(idx)
             out = self.model.decode(
-                ys[:idx, :].unsqueeze(0), memory, target_mask)
+                yhat[:idx, :].unsqueeze(0), memory, target_mask)
             out = out.transpose(0, 1)
             prob = self.model.generator(out[:, -1])
             # As we're not runing through softmax this isn't really a probability,
             # still fine as we're only interested in argmax.
             prob = prob.view(-1, gp.Stats.max_chord, gp.vocab_size)
             token = torch.argmax(prob[-1:, :, :], dim=2)
-            ys[idx, :] = token
+            yhat[idx, :] = token
             if token[0, 0] == gp.EOS[0]:
                 break
-        return ys
+        return yhat
+
+    def full_decoder(self, gp: GrandPiano, source: torch.Tensor) -> torch.Tensor:
+        # Let's call it 50 pixels / token; 25% overlap = 256 pixels ~ 5 tokens.
+        chunk_size = int(3 * gp.ipad_len / 4)   # 25% overlap
+        context_window_size = 5
+        width = source.size(1)
+
+        yhat = torch.full(
+            (2 * gp.spad_len, gp.Stats.max_chord), fill_value=GrandPiano.PAD[0]
+        ).to(self.device)
+        yhat[0, :] = GrandPiano.SOS[0]
+        yhat_pos = 1
+        context_window_start = 0  # Beginning of the context window size
+        for offset in range(1 + width // chunk_size):
+            start_offset = chunk_size * offset
+            end_offset = min(start_offset + gp.ipad_len, width)
+            print(f"stitch: {start_offset}:{end_offset} yhat_pos: {yhat_pos}")
+            chunk = source[:, start_offset:end_offset, :]
+            source_key_padding_mask = (chunk == GrandPiano.PAD[0])[:, :, 0]
+            memory = self.model.encode(
+                chunk,
+                src_key_padding_mask=source_key_padding_mask.to(self.device)
+            )
+
+            while yhat_pos < yhat.size(0) and yhat_pos - context_window_size < gp.spad_len:
+                target_mask = self.get_target_mask(
+                    yhat_pos - context_window_start)
+                out = self.model.decode(
+                    yhat[context_window_start:yhat_pos, :].unsqueeze(0), memory, target_mask)
+                out = out.transpose(0, 1)
+                prob = self.model.generator(out[:, -1])
+                prob = prob.view(-1, gp.Stats.max_chord, gp.vocab_size)
+                token = torch.argmax(prob[-1:, :, :], dim=2)
+                # Don't add EOS
+                if token[0, 0] == gp.EOS[0]:
+                    break
+                yhat[yhat_pos, :] = token
+                yhat_pos += 1
+
+            context_window_start = yhat_pos - context_window_size
+
+        # Do add the final EOS.
+        yhat[yhat_pos, :] = gp.EOS[0]
+        return yhat
 
     def predict(
-        self, gp: GrandPiano, source: torch.Tensor, use_beam: bool = False
+        self, gp: GrandPiano, source: torch.Tensor, use_beam: bool = False, use_full: bool = False
     ) -> torch.Tensor:
         """Translated the image given by PATH to kern-like tokens.
 
@@ -142,6 +186,7 @@ class Model:
             gp (GrandPiano): The dataset, to decode the tokens to string.
             source (torch.Tensor): Image to decode.
             use_beam (bool, optional): Use beam decoding rather than greedy. Defaults to False.
+            use_full (bool, optional): Enables decoding of images larger than padding length.
 
         Returns:
             The decoded stream of tokens tensor of (width, GrandPiano.Stats.max_chord)
@@ -150,7 +195,9 @@ class Model:
         if source is None:
             raise FileNotFoundError(f"File {path} not found, likely too wide.")
 
-        if use_beam:
+        if use_full:
+            yhat = self.full_decoder(gp, source.unsqueeze(0))
+        elif use_beam:
             yhat = self.beam_decode(gp, source.unsqueeze(0))
         else:
             yhat = self.greedy_decode(gp, source.unsqueeze(0))
@@ -191,14 +238,17 @@ def random_check(ctx, count: int, use_beam: bool):
               help="Displays / don't display the computed sequence.")
 @click.option("--use-beam", "use_beam", is_flag=True, default=False,
               help="Use beam decoding rather than greedy.")
+@click.option("--use-full", "use_full", is_flag=True, default=False,
+              help="Enables decoding of images larger than padding length.")
 @click.pass_context
-def predict(ctx, path: Path, do_display: bool, do_accuracy: bool, use_beam: bool):
+def predict(
+    ctx,
+    path: Path, do_display: bool, do_accuracy: bool, use_beam: bool, use_full: bool
+):
     """Translates the given PATH image file into kern-like notation.
 
     Args:
         path (Path): Path of the image to decode.
-        do_display (bool): Displays the sequence of decoded tokens.
-        do_accuracy (bool): If a .tokens file is available, display accuracy.
 
     Raises:
         FileNotFoundError: If the image PATH is not found or can't be loaded, e.g.
@@ -209,20 +259,37 @@ def predict(ctx, path: Path, do_display: bool, do_accuracy: bool, use_beam: bool
     context = cast(ClickContext, ctx.obj)
     gp = context.require_dataset()
     path = Path(path)
-    source, _ = gp.load_image(path, pad=True)
-    if source is None:
-        raise FileNotFoundError(f"File {path} not found, likely too wide.")
+
+    # Loads both the image and the sequence.
+    def load():
+        target = None
+        source, _ = gp.load_image(path)
+        if source is None:
+            raise FileNotFoundError(
+                f"Sequence for {path} not found, " +
+                "or too wide, consider the --use-full option."
+            )
+        if do_accuracy:
+            target, _ = gp.load_sequence(path.with_suffix(".tokens"))
+            if target is None:
+                raise FileNotFoundError(
+                    f"Sequence for {path.with_suffix(".tokens")} not found, " +
+                    "or too wide, consider the --use-full option."
+                )
+        return source, target
+
+    if use_full:
+        with gp.unfiltered():
+            source, target = load()
+    else:
+        source, target = load()
     with torch.no_grad():
         yhat = context.require_client().predict(
-            context.require_dataset(), source, use_beam=use_beam
+            context.require_dataset(), source, use_beam=use_beam, use_full=use_full
         )
         if do_accuracy:
-            y_path = path.with_suffix(".tokens")
-            y, _ = gp.load_sequence(y_path, pad=True)
-            if y is None:
-                raise FileNotFoundError(
-                    f"Tokens file {y_path} not found or too long.")
-            accuracy = compare_sequences(yhat, y)
+            assert target is not None, "load() failed to check target wasn't None."
+            accuracy = compare_sequences(yhat, target)
             print(f"Accuracy: {100.0 * accuracy:2.2f}")
         if do_display:
             gp.display(yhat)
