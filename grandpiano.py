@@ -4,6 +4,7 @@ import os
 import pickle
 import random
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Tuple, Union, cast
@@ -116,6 +117,20 @@ class GrandPiano:
         ])
         self.list(create=True)
         self.load_vocab(create=True)
+
+    _original_filter: Optional[Filter] = None
+
+    @contextmanager
+    def unfiltered(self):
+        """Context to cancel filter, allowing access to very long images and sequences."""
+        assert self._original_filter is None, "Can't nest unfiltered contexts."
+        self._original_filter = self.filter
+        self.filter = None
+        try:
+            yield
+        finally:
+            self.filter = self._original_filter
+            self._original_filter = None
 
     def list(
         self, create: bool = False, refresh: bool = False, split: float = 0.9
