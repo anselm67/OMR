@@ -30,15 +30,15 @@ def current_commit() -> str:
 def compare_sequences(yhat: torch.Tensor, y: torch.Tensor) -> float:
     from grandpiano import GrandPiano
     if yhat.size(0) != y.size(0):
-        width = max(yhat.size(0), y.size(0))
-        paded = torch.full(
-            (width, GrandPiano.Stats.max_chord), fill_value=GrandPiano.PAD[0])
+        padded = torch.full(
+            (max(yhat.size(0), y.size(0)), GrandPiano.Stats.max_chord),
+            fill_value=GrandPiano.PAD[0])
         if yhat.size(0) > y.size(0):
-            paded[0:y.size(0), :] = y
-            y = paded.to(y.device)
+            padded[0:y.size(0), :] = y
+            y = padded.to(y.device)
         else:
-            paded[0:yhat.size(0), :] = yhat
-            yhat = paded.to(yhat.device)
+            padded[0:yhat.size(0), :] = yhat
+            yhat = padded.to(yhat.device)
     wrong = torch.sum(y != yhat).item()
     total = torch.sum(y != GrandPiano.PAD[0]).item()
     return 1.0 - wrong / total
