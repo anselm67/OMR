@@ -67,7 +67,7 @@ class Embedder(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x.to(torch.float)) + self.pe
+        return self.net(x.to(torch.float)) + self.pe[:, :x.size(1), :]
 
 
 class Translator(nn.Module):

@@ -155,9 +155,9 @@ class Model:
             raise FileNotFoundError(f"File {path} not found, likely too wide.")
 
         if use_beam:
-            chords = self.greedy_decode(gp, source.unsqueeze(0))
-        else:
             chords = self.beam_decode(gp, source.unsqueeze(0))
+        else:
+            chords = self.greedy_decode(gp, source.unsqueeze(0))
         accuracy = 0.0
         if target is not None:
             accuracy = compare_sequences(chords, target)
