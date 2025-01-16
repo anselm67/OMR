@@ -170,7 +170,7 @@ class Model:
 @click.argument("count", type=int)
 @click.option("--display/--no-display", "do_display", default=True,
               help="Displays / don't display the computed sequence.")
-@click.option("--beam-decoding", "use_beam", is_flag=True, default=False,
+@click.option("--use-beam", "use_beam", is_flag=True, default=False,
               help="Use beam decoding rather than greedy.")
 @click.pass_context
 def random_check(ctx, count: int, do_display: bool, use_beam: bool):
@@ -202,7 +202,7 @@ def random_check(ctx, count: int, do_display: bool, use_beam: bool):
               help="Computes accuracy against .tokens file.")
 @click.option("--display/--no-display", "do_display", default=True,
               help="Displays / don't display the computed sequence.")
-@click.option("--beam-decoding", "use_beam", is_flag=True, default=False,
+@click.option("--use-beam", "use_beam", is_flag=True, default=False,
               help="Use beam decoding rather than greedy.")
 @click.pass_context
 def predict(ctx, path: Path, do_display: bool, do_accuracy: bool, use_beam: bool):
