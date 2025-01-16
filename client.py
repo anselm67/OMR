@@ -134,46 +134,35 @@ class Model:
         return ys
 
     def predict(
-        self, gp: GrandPiano,
-        source: torch.Tensor,
-        target: Optional[torch.Tensor],
-        do_display: bool = True,
-        use_beam: bool = False
-    ) -> float:
+        self, gp: GrandPiano, source: torch.Tensor, use_beam: bool = False
+    ) -> torch.Tensor:
         """Translated the image given by PATH to kern-like tokens.
 
         Args:
             gp (GrandPiano): The dataset, to decode the tokens to string.
             source (torch.Tensor): Image to decode.
-            target (torch.Tensor, optional): Compute and return accuracy against this 
-                given target. Defaults to None.
-            do_display (bool, optional): Displays the computed tokens. Defaults to True.
             use_beam (bool, optional): Use beam decoding rather than greedy. Defaults to False.
+
+        Returns:
+            The decoded stream of tokens tensor of (width, GrandPiano.Stats.max_chord)
         """
         self.model.eval()
         if source is None:
             raise FileNotFoundError(f"File {path} not found, likely too wide.")
 
         if use_beam:
-            chords = self.beam_decode(gp, source.unsqueeze(0))
+            yhat = self.beam_decode(gp, source.unsqueeze(0))
         else:
-            chords = self.greedy_decode(gp, source.unsqueeze(0))
-        accuracy = 0.0
-        if target is not None:
-            accuracy = compare_sequences(chords, target)
-        if do_display:
-            gp.display(chords)
-        return accuracy
+            yhat = self.greedy_decode(gp, source.unsqueeze(0))
+        return yhat
 
 
 @click.command()
 @click.argument("count", type=int)
-@click.option("--display/--no-display", "do_display", default=True,
-              help="Displays / don't display the computed sequence.")
 @click.option("--use-beam", "use_beam", is_flag=True, default=False,
               help="Use beam decoding rather than greedy.")
 @click.pass_context
-def random_check(ctx, count: int, do_display: bool, use_beam: bool):
+def random_check(ctx, count: int, use_beam: bool):
     """Test model accuracy over randomly picked samples from the validation dataset.
 
     Args:
@@ -186,11 +175,9 @@ def random_check(ctx, count: int, do_display: bool, use_beam: bool):
     with torch.no_grad():
         for _ in range(count):
             path, image, _, sequence, _ = context.require_dataset().next("valid", pad=True)
-            accuracy = context.require_client().predict(
-                context.require_dataset(),
-                image, sequence,
-                do_display=do_display, use_beam=use_beam
-            )
+            yhat = context.require_client().predict(
+                context.require_dataset(), image, use_beam=use_beam)
+            accuracy = compare_sequences(yhat, sequence)
             accuracies.append(accuracy)
             print(f"{100.0 * accuracy:<8.2f}{path}")
     print(f"Average: {100.0 * sum(accuracies) / len(accuracies):2.2f}")
@@ -209,12 +196,14 @@ def predict(ctx, path: Path, do_display: bool, do_accuracy: bool, use_beam: bool
     """Translates the given PATH image file into kern-like notation.
 
     Args:
-        path (Path): Path f the image to decode.
+        path (Path): Path of the image to decode.
         do_display (bool): Displays the sequence of decoded tokens.
         do_accuracy (bool): If a .tokens file is available, display accuracy.
 
     Raises:
-        FileNotFoundError: _description_
+        FileNotFoundError: If the image PATH is not found or can't be loaded, e.g.
+            because it's too wide; Or if accuracy is requested and a matching .tokens
+            file couldn't be loaded.
     """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
@@ -223,17 +212,20 @@ def predict(ctx, path: Path, do_display: bool, do_accuracy: bool, use_beam: bool
     source, _ = gp.load_image(path, pad=True)
     if source is None:
         raise FileNotFoundError(f"File {path} not found, likely too wide.")
-    target = None
-    if do_accuracy:
-        target, _ = gp.load_sequence(path.with_suffix(".tokens"), pad=True)
     with torch.no_grad():
-        accuracy = context.require_client().predict(
-            context.require_dataset(),
-            source, target,
-            do_display=do_display, use_beam=use_beam
+        yhat = context.require_client().predict(
+            context.require_dataset(), source, use_beam=use_beam
         )
         if do_accuracy:
+            y_path = path.with_suffix(".tokens")
+            y, _ = gp.load_sequence(y_path, pad=True)
+            if y is None:
+                raise FileNotFoundError(
+                    f"Tokens file {y_path} not found or too long.")
+            accuracy = compare_sequences(yhat, y)
             print(f"Accuracy: {100.0 * accuracy:2.2f}")
+        if do_display:
+            gp.display(yhat)
 
 
 @click.command()
