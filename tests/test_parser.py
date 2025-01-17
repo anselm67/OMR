@@ -134,11 +134,35 @@ class TestHumdrumParser(unittest.TestCase):
             duration=Duration(16, 2),
         ))
 
+    def test_rest_duration_extra(self):
+        self.parse_one_token("8ryy\n", Rest(
+            duration=Duration(8, 0),
+        ))
+
     def test_open_before_note_token(self):
         self.parse_one_token("(16..A\n", Note(
             pitch=Pitch.A,
             duration=Duration(16, 2),
             starts_slur=True,
+        ))
+
+    def test_ritardendo_note_token(self):
+        # https://kern.humdrum.org/cgi-bin/ksdata?location=users/craig/classical/chopin/mazurka&file=mazurka06-1.krn&format=info
+        self.parse_one_token("(20%3A#\n", Note(
+            pitch=Pitch.A,
+            sharps=1,
+            duration=Duration(3, 0),
+            starts_slur=True,
+        ))
+
+    def test_barred_gracenote_token(self):
+        # https://kern.humdrum.org/cgi-bin/ksdata?location=users/craig/classical/chopin/mazurka&file=mazurka06-1.krn&format=info
+        self.parse_one_token("(<8qgg#/\n", Note(
+            pitch=Pitch.gg,
+            sharps=1,
+            duration=Duration(8, 0),
+            starts_slur=True,
+            is_gracenote=True
         ))
 
 

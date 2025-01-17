@@ -131,12 +131,12 @@ class NormHandler(Parser[Spine].Handler):
     def open_spine(self,
                    spine_type: Optional[str] = None,
                    parent: Optional[Spine] = None) -> Spine:
-        spine = Spine()
         match spine_type:
             case "**dynam":
-                self.spines.append(IgnoredSpine())
+                spine = IgnoredSpine()
             case _:
-                self.spines.append(spine)
+                spine = Spine()
+        self.spines.append(spine)
         return spine
 
     def close_spine(self, spine: Spine):

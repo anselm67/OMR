@@ -40,18 +40,155 @@ from utils import iterable_from_file
 T = TypeVar("T")
 
 
+class SpineHolder[T](ABC):
+
+    spine: T
+
+    def __init__(self, spine: T):
+        self.spine = spine
+
+    @abstractmethod
+    def parse_token(self, text: str) -> Token:
+        pass
+
+
+class KernSpineHolder(SpineHolder):
+
+    OPEN_NOTE_RE = re.compile(r'^([<>\{\[\(]+)(.*)$')
+    NOTE_RE = re.compile(r'^(\d+%)?([\d]+)?(\.*)?(q)?([a-gA-G]+)(.*)$')
+
+    warnings_enabled: bool = True
+
+    def error(self, msg: str):
+        raise SyntaxError(msg)
+
+    def parse_note(self, token) -> Note:
+        full_token_text = token
+        # When an opening (tie, slur, and phrase) starts, keep it for the end.
+        additional = ""
+        if (m := self.OPEN_NOTE_RE.match(token)):
+            additional += m.group(1)
+            token = m.group(2)
+        if not (m := self.NOTE_RE.match(token)):
+            self.error(f"Invalid note token '{full_token_text}'")
+        ritardendo_text, duration_int, dots, q, pitch, marks = m.groups()
+        if marks:
+            additional += marks
+        if q:
+            additional += q
+        # Checks for a valid pitch:
+        if pitch not in Pitch.__members__:
+            self.error(f"Unknown pitch '{pitch}'.")
+        # Computes duration with optional dots
+        duration = None
+        if duration_int:
+            duration = Duration(int(duration_int), len(dots))
+        else:
+            assert "q" in additional, "Gracenotes expected without duration."
+
+        # https://www.humdrum.org/Humdrum/representations/kern.html
+        # 3.5 Editorial signifiers: XxYy not handled.
+        if self.warnings_enabled:
+            if ritardendo_text:
+                print(
+                    f"Un-handled ritardendo(?) duration in {full_token_text}.")
+            for x in r'TtMmWwsS$R\'/\\Q"`~^':
+                if x in additional:
+                    print(f"Warning: flags {additional} in {
+                          full_token_text} not handled.")
+                    break
+        # TODO Handle 'n' as neither sharp nor flat.
+        return Note(
+            pitch=Pitch[pitch],
+            duration=duration,
+            flats=additional.count("-"),
+            sharps=additional.count("#"),
+            starts_tie="[" in additional,
+            ends_tie="]" in additional,
+            starts_slur="(" in additional,
+            ends_slur=")" in additional,
+            starts_phrase="{" in additional,
+            ends_phrase="}" in additional,
+            starts_beam=additional.count("L"),
+            ends_beam=additional.count("J"),
+            is_gracenote="q" in additional,
+            has_left_beam="k" in additional,
+            has_right_beam="K" in additional,
+        )
+
+    CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
+    SIGNATURE_RE = re.compile(r'\*k\[(([a-z][#-])*)\]')
+    METER_RE = re.compile(r'^\*M(\d+)/(\d+)$')
+    METRICAL_RE = re.compile(r'^\*met\(([cC]\|?)\)$')
+
+    REST_RE = re.compile(r'^([\d]+)?(\.*)(\.*)r(.*)$')
+    BAR_RE = re.compile(r'^=+.*$')
+
+    def parse_event(self, text: str) -> Token:
+        if self.BAR_RE.match(text):
+            return Bar(text)
+        elif text == '.':
+            return Continue()
+        elif text.startswith("!"):
+            # A comment, we don't .
+            return Comment(text)
+        elif (m := self.REST_RE.match(text)):
+            return Rest(Duration(int(m.group(1)), len(m.group(2))))
+        else:
+            notes = list([])
+            for note in text.split():
+                notes.append(self.parse_note(note))
+            if len(notes) == 1:
+                return notes[0]
+            else:
+                return Chord(notes)
+
+    def parse_token(self, text: str) -> Optional[Token]:
+        """Parses the given text as a **kern token.
+
+            Returns: The parsed token, or None if the text should be parsed
+                by the parser as a Spine path indicator.
+        """
+        if (m := self.CLEF_RE.match(text)):
+            return Clef(pitch_from_note_and_octave(m.group(1), int(m.group(2))))
+        elif (m := self.SIGNATURE_RE.match(text)):
+            # Empty key signature is allowed.
+            if (accidental := m.group(1)):
+                # TODO Check that accidental is really valid as the RE isn't prefect.
+                return Key(
+                    is_flats=(accidental[-1] == '-'),
+                    count=len(accidental) // 2
+                )
+            else:
+                # Empty key signatures are ok.
+                return Key(False, 0)
+        elif (m := self.METER_RE.match(text)):
+            return Meter(
+                int(m.group(1)),
+                int(m.group(2))
+            )
+        elif (m := self.METRICAL_RE.match(text)):
+            metric = m.group(1).upper()
+            if metric == 'C':
+                return Meter(4, 4)
+            elif metric == "C|":
+                return Meter(2, 2)
+            else:
+                self.error(f"Invalid metric '{metric}'.")
+        elif text.startswith("*"):
+            # This asks the parser to parse the text as a path indicator
+            return None
+        else:
+            return self.parse_event(text)
+
+
+class DynamSpineHolder(SpineHolder):
+
+    def parse_token(self, text: str) -> Token:
+        return Continue()
+
+
 class Parser(Generic[T]):
-
-    class SpineHolder:
-
-        def __init__(self, spine: T):
-            self.spine = spine
-
-    class KernSpine(SpineHolder):
-        pass
-
-    class DynamSpine(SpineHolder):
-        pass
 
     class Handler(ABC):
 
@@ -130,52 +267,6 @@ class Parser(Generic[T]):
             if not self.COMMENT_RE.match(line):
                 return line
 
-    OPEN_NOTE_RE = re.compile(r'^([\{\[\(]+)(.*)$')
-    NOTE_RE = re.compile(r'^([\d]+)?(\.*)?([a-gA-G]+)(.*)$')
-
-    def parse_note(self, token) -> Note:
-        # When an opening (tie, slur, and phrase) starts, keep it for the end.
-        additional = ""
-        if (m := self.OPEN_NOTE_RE.match(token)):
-            additional += m.group(1)
-            token = m.group(2)
-        if not (m := self.NOTE_RE.match(token)):
-            self.error(f"Invalid duration or note in token '{token}'")
-        additional += m.group(4)
-        # Checks for a valid pitch:
-        if m.group(3) not in Pitch.__members__:
-            self.error(f"Unknown pitch '{m.group(3)}'.")
-        # Computes duration with optional dots
-        duration = None
-        if m.group(1):
-            duration = Duration(int(m.group(1)), len(m.group(2)))
-        else:
-            assert "q" in additional, "Gracenotes expected without duration."
-
-        # https://www.humdrum.org/Humdrum/representations/kern.html
-        # 3.5 Editorial signifiers: XxYy not handled.
-        for x in r'TtMmWwsS$R\'/\\Q"`~^':
-            if x in token:
-                print(token)
-        # TODO Handle 'n' as neither sharp nor flat.
-        return Note(
-            pitch=Pitch[m.group(3)],
-            duration=duration,
-            flats=additional.count("-"),
-            sharps=additional.count("#"),
-            starts_tie="[" in additional,
-            ends_tie="]" in additional,
-            starts_slur="(" in additional,
-            ends_slur=")" in additional,
-            starts_phrase="{" in additional,
-            ends_phrase="}" in additional,
-            starts_beam=additional.count("L"),
-            ends_beam=additional.count("J"),
-            is_gracenote="q" in additional,
-            has_left_beam="k" in additional,
-            has_right_beam="K" in additional,
-        )
-
     def position(self, spine_holder: SpineHolder) -> int:
         if (pos := self.spines.index(spine_holder)) < 0:
             self.error(f"Spine {spine_holder} missing.")
@@ -188,7 +279,7 @@ class Parser(Generic[T]):
         self.spines = spines
 
     def open_spine(self, at: int) -> SpineHolder:
-        spine_holder = Parser.SpineHolder(self.handler.open_spine("*+"))
+        spine_holder = KernSpineHolder(self.handler.open_spine("*+"))
         self.insert_spine(at, spine_holder)
         return spine_holder
 
@@ -201,8 +292,8 @@ class Parser(Generic[T]):
 
     def branch_spine(self, source_holder: SpineHolder) -> T:
         branch = self.handler.branch_spine(source_holder.spine)
-        self.insert_spine(self.position(source_holder),
-                          Parser.SpineHolder(branch))
+        holder = type(source_holder)(branch)
+        self.insert_spine(self.position(source_holder), holder)
         return branch
 
     def merge_spines(self, source_holder: SpineHolder, into_holder: SpineHolder):
@@ -252,74 +343,14 @@ class Parser(Generic[T]):
                 self.error(f"Unknown spine indicator '{indicator}'.")
         return SpinePath(indicator)
 
-    REST_RE = re.compile(r'^([\d]+)?(\.*)(\.*)r$')
-    BAR_RE = re.compile(r'^=+.*$')
-
-    def parse_event(
-        self,
-        spine_holder: SpineHolder,
-        text: str,
-        tokens_iterator: Iterator[Tuple[SpineHolder, str]]
-    ) -> Token:
-        if self.BAR_RE.match(text):
-            return Bar(text)
-        elif text == '.':
-            return Continue()
-        elif text.startswith("!"):
-            # A comment, we don't .
-            return Comment(text)
-        elif (m := self.REST_RE.match(text)):
-            return Rest(Duration(int(m.group(1)), len(m.group(2))))
-        elif text.startswith("*"):
-            return self.parse_spine_indicator(spine_holder, text, tokens_iterator)
-        else:
-            notes = list([])
-            for note in text.split():
-                notes.append(self.parse_note(note))
-            if len(notes) == 1:
-                return notes[0]
-            else:
-                return Chord(notes)
-
-    CLEF_RE = re.compile(r'^\*clef([a-zA-Z])([0-9])$')
-    SIGNATURE_RE = re.compile(r'\*k\[(([a-z][#-])*)\]')
-    METER_RE = re.compile(r'^\*M(\d+)/(\d+)$')
-    METRICAL_RE = re.compile(r'^\*met\(([cC]\|?)\)$')
-
-    def parse_token(
-        self,
-        spine_holder: SpineHolder,
-        text: str,
-        iterator: Iterator[Tuple[SpineHolder, str]]
-    ) -> Token:
-        if (m := self.CLEF_RE.match(text)):
-            return Clef(pitch_from_note_and_octave(m.group(1), int(m.group(2))))
-        elif (m := self.SIGNATURE_RE.match(text)):
-            # Empty key signature is allowed.
-            if (accidental := m.group(1)):
-                # TODO Check that accidental is really valid as the RE isn't prefect.
-                return Key(
-                    is_flats=(accidental[-1] == '-'),
-                    count=len(accidental) // 2
-                )
-            else:
-                # Empty key signatures are ok.
-                return Key(False, 0)
-        elif (m := self.METER_RE.match(text)):
-            return Meter(
-                int(m.group(1)),
-                int(m.group(2))
-            )
-        elif (m := self.METRICAL_RE.match(text)):
-            metric = m.group(1).upper()
-            if metric == 'C':
-                return Meter(4, 4)
-            elif metric == "C|":
-                return Meter(2, 2)
-            else:
-                self.error(f"Invalid metric '{metric}'.")
-        else:
-            return self.parse_event(spine_holder, text, iterator)
+    def parse_token(self, holder: SpineHolder, text: str, tokens_iterator) -> Token:
+        try:
+            token = holder.parse_token(text)
+            if token is None:
+                return self.parse_spine_indicator(holder, text, tokens_iterator)
+            return token
+        except SyntaxError as e:
+            raise SyntaxError(f"{self.path}, {self.lineno}: {e}") from e
 
     def parse(self):
         self.header()
@@ -332,9 +363,8 @@ class Parser(Generic[T]):
                 self.error(f"Got {len(tokens)} for {len(self.spines)} spines.")
             tokens_iterator = zip(self.spines, tokens)
             self.handler.append([
-                (spine_holder.spine, self.parse_token(
-                    spine_holder, text, tokens_iterator))
-                for spine_holder, text in tokens_iterator
+                (holder.spine, self.parse_token(holder, text, tokens_iterator))
+                for holder, text in tokens_iterator
             ])
 
     def header(self):
@@ -343,9 +373,9 @@ class Parser(Generic[T]):
             holder = None
             match kern:
                 case "**kern":
-                    holder = Parser.SpineHolder(self.handler.open_spine(kern))
+                    holder = KernSpineHolder(self.handler.open_spine(kern))
                 case "**dynam":
-                    holder = Parser.DynamSpine(self.handler.open_spine(kern))
+                    holder = DynamSpineHolder(self.handler.open_spine(kern))
                 case _:
                     self.error(f"Expected a **kern symbol, got '{kern}'.")
             self.spines.append(holder)
