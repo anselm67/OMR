@@ -134,6 +134,13 @@ class TestHumdrumParser(unittest.TestCase):
             duration=Duration(16, 2),
         ))
 
+    def test_open_before_note_token(self):
+        self.parse_one_token("(16..A\n", Note(
+            pitch=Pitch.A,
+            duration=Duration(16, 2),
+            starts_slur=True,
+        ))
+
 
 if __name__ == '__main__':
     unittest.main()
