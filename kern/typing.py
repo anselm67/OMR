@@ -171,6 +171,10 @@ class Note(Token):
     sharps: int = 0
     starts_tie: bool = False
     ends_tie: bool = False
+    starts_slur: bool = False
+    ends_slur: bool = False
+    starts_phrase: bool = False
+    ends_phrase: bool = False
     starts_beam: int = 0
     ends_beam: int = 0
     is_gracenote: bool = False

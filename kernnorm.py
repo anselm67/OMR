@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, TextIO, Tuple, Type, Union, cast
+from typing import Callable, Dict, Iterator, List, Optional, TextIO, Tuple, Type, cast
 
 import click
 
@@ -27,6 +27,11 @@ class Spine:
 
     in_beam: int = 0
     in_tie: bool = False
+
+
+class IgnoredSpine(Spine):
+
+    pass
 
 
 class TokenFormatter:
@@ -123,9 +128,15 @@ class NormHandler(Parser[Spine].Handler):
     def position(self, spine) -> int:
         return self.spines.index(spine)
 
-    def open_spine(self) -> Spine:
+    def open_spine(self,
+                   spine_type: Optional[str] = None,
+                   parent: Optional[Spine] = None) -> Spine:
         spine = Spine()
-        self.spines.append(spine)
+        match spine_type:
+            case "**dynam":
+                self.spines.append(IgnoredSpine())
+            case _:
+                self.spines.append(spine)
         return spine
 
     def close_spine(self, spine: Spine):
@@ -160,6 +171,8 @@ class NormHandler(Parser[Spine].Handler):
         return False
 
     def append(self, tokens: List[Tuple[Spine, Token]]):
+        tokens = [(spine, token) for spine, token in tokens
+                  if not isinstance(spine, IgnoredSpine)]
         if self.should_skip(tokens):
             return
         if self.output:

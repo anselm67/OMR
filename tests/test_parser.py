@@ -1,5 +1,5 @@
 import unittest
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from unittest.mock import Mock, call
 
 from kern.parser import Parser
@@ -12,7 +12,11 @@ class EmptySpine:
 
 class EmptyHandler(Parser[EmptySpine].Handler):
 
-    def open_spine(self) -> EmptySpine:
+    def open_spine(
+        self,
+        spine_type: Optional[str] = None,
+        parent: Optional[EmptySpine] = None
+    ) -> EmptySpine:
         return EmptySpine()
 
     def close_spine(self, spine: EmptySpine):

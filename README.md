@@ -8,3 +8,7 @@ In addition, all voices, or chords are merged into a single "spine".
 The FILES files has infos about the role & purpose of every file in the package.
 
 This is not meant for public consumption yet.
+
+Datasets:
+- GrandStaff https://grfia.dlsi.ua.es/musicdocs/grandstaff.tgz
+- Kern repository http://kern.ccarh.org/

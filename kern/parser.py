@@ -5,6 +5,7 @@
 # /home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-97-100.krn
 import re
 from abc import ABC, abstractmethod
+from enum import Enum
 from pathlib import Path
 from typing import (
     Generic,
@@ -41,10 +42,29 @@ T = TypeVar("T")
 
 class Parser(Generic[T]):
 
+    class SpineHolder:
+
+        def __init__(self, spine: T):
+            self.spine = spine
+
+    class KernSpine(SpineHolder):
+        pass
+
+    class DynamSpine(SpineHolder):
+        pass
+
     class Handler(ABC):
 
         @abstractmethod
-        def open_spine(self) -> T:
+        def open_spine(self,
+                       spine_type: Optional[str] = None,
+                       parent: Optional[T] = None
+                       ) -> T:
+            """A new spine is opened.
+
+            This can happen either form the header of the score, in which case a spine_type
+            will be provided (e.g. '**kern' or '**dynam') or as a spine is splitted in which
+            case the parent spine is provided."""
             pass
 
         @abstractmethod
@@ -72,7 +92,7 @@ class Parser(Generic[T]):
     lineno: int = 0
     verbose: bool = False
 
-    spines: List[T]
+    spines: List[SpineHolder]
     handler: Handler
 
     def __init__(self, path: Union[str, Path], records: Iterable[str], handler: Handler):
@@ -110,12 +130,18 @@ class Parser(Generic[T]):
             if not self.COMMENT_RE.match(line):
                 return line
 
+    OPEN_NOTE_RE = re.compile(r'^([\{\[\(]+)(.*)$')
     NOTE_RE = re.compile(r'^([\d]+)?(\.*)?([a-gA-G]+)(.*)$')
 
     def parse_note(self, token) -> Note:
+        # When an opening (tie, slur, and phrase) starts, keep it for the end.
+        additional = ""
+        if (m := self.OPEN_NOTE_RE.match(token)):
+            additional += m.group(1)
+            token = m.group(2)
         if not (m := self.NOTE_RE.match(token)):
             self.error(f"Invalid duration or note in token '{token}'")
-        additional = m.group(4)
+        additional += m.group(4)
         # Checks for a valid pitch:
         if m.group(3) not in Pitch.__members__:
             self.error(f"Unknown pitch '{m.group(3)}'.")
@@ -131,7 +157,7 @@ class Parser(Generic[T]):
         for x in r'TtMmWwsS$R\'/\\Q"`~^':
             if x in token:
                 print(token)
-        # TODO Handle 'n' as neither shapr nor flat.
+        # TODO Handle 'n' as neither sharp nor flat.
         return Note(
             pitch=Pitch[m.group(3)],
             duration=duration,
@@ -139,6 +165,10 @@ class Parser(Generic[T]):
             sharps=token.count("#"),
             starts_tie="[" in token,
             ends_tie="]" in token,
+            starts_slur="()" in token,
+            ends_slur=")" in token,
+            starts_phrase="{" in token,
+            ends_phrase="}" in token,
             starts_beam=token.count("L"),
             ends_beam=token.count("J"),
             is_gracenote="q" in token,
@@ -146,67 +176,78 @@ class Parser(Generic[T]):
             has_right_beam="K" in token,
         )
 
-    def position(self, spine: T) -> int:
-        if (pos := self.spines.index(spine)) < 0:
-            self.error(f"Spine {spine} missing.")
+    def position(self, spine_holder: SpineHolder) -> int:
+        if (pos := self.spines.index(spine_holder)) < 0:
+            self.error(f"Spine {spine_holder} missing.")
         return pos
 
-    def insert_spine(self, at: int, spine: T):
+    def insert_spine(self, at: int, spine_holder: SpineHolder):
         # Copying is required as these are called from within self.spines iterators.
         spines = list(self.spines)
-        spines.insert(at, spine)
+        spines.insert(at, spine_holder)
         self.spines = spines
 
-    def open_spine(self, at: int) -> T:
-        spine = self.handler.open_spine()
-        self.insert_spine(at, spine)
-        return spine
+    def open_spine(self, at: int) -> SpineHolder:
+        spine_holder = Parser.SpineHolder(self.handler.open_spine("*+"))
+        self.insert_spine(at, spine_holder)
+        return spine_holder
 
-    def close_spine(self, spine: T):
-        self.handler.close_spine(spine)
+    def close_spine(self, spine_holder: SpineHolder):
+        self.handler.close_spine(spine_holder.spine)
         # Copying is required as these are called from within self.spines iterators.
         spines = list(self.spines)
-        spines.remove(spine)
+        spines.remove(spine_holder)
         self.spines = spines
 
-    def branch_spine(self, source: T) -> T:
-        branch = self.handler.branch_spine(source)
-        self.insert_spine(self.position(source), branch)
+    def branch_spine(self, source_holder: SpineHolder) -> T:
+        branch = self.handler.branch_spine(source_holder.spine)
+        self.insert_spine(self.position(source_holder),
+                          Parser.SpineHolder(branch))
         return branch
 
-    def merge_spines(self, source: T, into: T):
-        self.handler.merge_spines(source, into)
-        self.close_spine(source)
+    def merge_spines(self, source_holder: SpineHolder, into_holder: SpineHolder):
+        self.handler.merge_spines(source_holder.spine, into_holder.spine)
+        self.close_spine(source_holder)
 
-    INDICATOR_RE = re.compile(r'^\*([\w+]*)$')
+    INDICATOR_RE = re.compile(r'^\*([#:/\w+]*)$')
+    SECTION_LABEL_RE = re.compile(r'^\*>.*$')
 
     def parse_spine_indicator(
-        self, spine, indicator: str,
-        tokens_iterator: Iterator[Tuple[T, str]]
+        self,
+        spine_holder: SpineHolder,
+        indicator: str,
+        tokens_iterator: Iterator[Tuple[SpineHolder, str]]
     ) -> Token:
         match indicator:
             case '*-':
-                self.close_spine(spine)
+                self.close_spine(spine_holder)
             case '*+':
-                self.open_spine(self.position(spine))
+                self.open_spine(self.position(spine_holder))
             case '*^':
                 # Branch off into a new spine.
-                self.branch_spine(spine)
+                self.branch_spine(spine_holder)
             case '*v':
+                holder = spine_holder
                 for next_spine, next_token in tokens_iterator:
-                    if spine and next_token == "*v":
-                        self.merge_spines(next_spine, spine)
+                    if holder and next_token == "*v":
+                        self.merge_spines(next_spine, holder)
                     elif next_token == "*":
                         # No more merges allowed.
-                        spine = None
+                        holder = None
                     else:
                         self.error(f"Invalid spine merge '{next_token}'")
             case '*x':
                 self.error("Spine exchange not implemented.")
+            case _ if self.SECTION_LABEL_RE.match(indicator):
+                # Section labels https://www.humdrum.org/guide/ch20/ skip for now.
+                for next_spine, next_token in tokens_iterator:
+                    if not next_token.startswith('*>'):
+                        self.error(f"Unexpected token {
+                                   next_token} within section labels.")
             case _ if (m := self.INDICATOR_RE.match(indicator)):
                 # Noop spine indicator.
                 if (indicator := m.group(1)):
-                    self.handler.rename_spine(spine, indicator)
+                    self.handler.rename_spine(spine_holder.spine, indicator)
             case _:
                 self.error(f"Unknown spine indicator '{indicator}'.")
         return SpinePath(indicator)
@@ -214,8 +255,12 @@ class Parser(Generic[T]):
     REST_RE = re.compile(r'^([\d]+)?(\.*)(\.*)r$')
     BAR_RE = re.compile(r'^=+.*$')
 
-    def parse_event(self, spine: T, text: str,
-                    tokens_iterator: Iterator[Tuple[T, str]]) -> Token:
+    def parse_event(
+        self,
+        spine_holder: SpineHolder,
+        text: str,
+        tokens_iterator: Iterator[Tuple[SpineHolder, str]]
+    ) -> Token:
         if self.BAR_RE.match(text):
             return Bar(text)
         elif text == '.':
@@ -226,7 +271,7 @@ class Parser(Generic[T]):
         elif (m := self.REST_RE.match(text)):
             return Rest(Duration(int(m.group(1)), len(m.group(2))))
         elif text.startswith("*"):
-            return self.parse_spine_indicator(spine, text, tokens_iterator)
+            return self.parse_spine_indicator(spine_holder, text, tokens_iterator)
         else:
             notes = list([])
             for note in text.split():
@@ -241,7 +286,12 @@ class Parser(Generic[T]):
     METER_RE = re.compile(r'^\*M(\d+)/(\d+)$')
     METRICAL_RE = re.compile(r'^\*met\(([cC]\|?)\)$')
 
-    def parse_token(self, spine: T, text: str, iterator: Iterator[Tuple[T, str]]) -> Token:
+    def parse_token(
+        self,
+        spine_holder: SpineHolder,
+        text: str,
+        iterator: Iterator[Tuple[SpineHolder, str]]
+    ) -> Token:
         if (m := self.CLEF_RE.match(text)):
             return Clef(pitch_from_note_and_octave(m.group(1), int(m.group(2))))
         elif (m := self.SIGNATURE_RE.match(text)):
@@ -269,7 +319,7 @@ class Parser(Generic[T]):
             else:
                 self.error(f"Invalid metric '{metric}'.")
         else:
-            return self.parse_event(spine, text, iterator)
+            return self.parse_event(spine_holder, text, iterator)
 
     def parse(self):
         self.header()
@@ -282,13 +332,20 @@ class Parser(Generic[T]):
                 self.error(f"Got {len(tokens)} for {len(self.spines)} spines.")
             tokens_iterator = zip(self.spines, tokens)
             self.handler.append([
-                (spine, self.parse_token(spine, text, tokens_iterator))
-                for spine, text in tokens_iterator
+                (spine_holder.spine, self.parse_token(
+                    spine_holder, text, tokens_iterator))
+                for spine_holder, text in tokens_iterator
             ])
 
     def header(self):
         kerns = self.next(throw_on_end=True).split()    # type: ignore
         for kern in kerns:
-            if kern != "**kern":
-                self.error(f"Expected a **kern symbol, got '{kern}'.")
-            self.spines.append(self.handler.open_spine())
+            holder = None
+            match kern:
+                case "**kern":
+                    holder = Parser.SpineHolder(self.handler.open_spine(kern))
+                case "**dynam":
+                    holder = Parser.DynamSpine(self.handler.open_spine(kern))
+                case _:
+                    self.error(f"Expected a **kern symbol, got '{kern}'.")
+            self.spines.append(holder)
