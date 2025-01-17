@@ -140,7 +140,11 @@ class Meter(Token):
 
 @dataclass
 class Bar(Token):
-    symbol: str
+    text: str
+
+    def __init__(self, text: str):
+        self.text = text
+        self.is_final = (text == "==")
 
 
 @dataclass
@@ -178,8 +182,11 @@ class Note(Token):
     starts_beam: int = 0
     ends_beam: int = 0
     is_gracenote: bool = False
+    is_groupetto: bool = False
     has_left_beam: bool = False
     has_right_beam: bool = False
+    is_upper_thrill: bool = False
+    is_lower_thrill: bool = False
 
 
 @dataclass

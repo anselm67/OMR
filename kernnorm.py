@@ -11,6 +11,7 @@ from kern.typing import (
     Bar,
     Chord,
     Clef,
+    Comment,
     Continue,
     Duration,
     Key,
@@ -63,8 +64,9 @@ class TokenFormatter:
     def format_pitch(self, pitch: Pitch) -> str:
         return pitch.name
 
-    def format_bar(self, spine: Spine, _: Token) -> str:
-        return "="
+    def format_bar(self, spine: Spine, token: Token) -> str:
+        bar = cast(Bar, token)
+        return "==" if bar.is_final else "="
 
     def format_rest(self, spine: Spine, token: Token) -> str:
         rest = cast(Rest, token)
@@ -90,7 +92,7 @@ class TokenFormatter:
         accidentals = ("#" * note.sharps) or ("-" * note.flats)
         duration_text = ""
         if (duration := note.duration) is None:
-            assert note.is_gracenote, "Only gracenotes don't have duration."
+            assert note.is_gracenote or note.is_groupetto, "Only gracenotes don't have duration."
             duration_text = "/q"
         else:
             duration_text = f"/{self.format_duration(duration)}"
@@ -165,6 +167,9 @@ class NormHandler(Parser[Spine].Handler):
             self.last_metric = token
         else:
             self.last_metric = None
+        # Skips all comments.
+        if all([isinstance(token, Comment) for _, token in tokens]):
+            return True
         # Pure spine paths aren't interesting to us.
         if all([isinstance(token, SpinePath) for _, token in tokens]):
             return True
@@ -185,11 +190,17 @@ class NormHandler(Parser[Spine].Handler):
             self.output.close()
 
 
-def tokenize_file(path: Path, write_output: bool = True, show_failed: bool = True) -> bool:
+def tokenize_file(
+    path: Path,
+    write_output: bool = True,
+    show_failed: bool = True,
+    enable_warnings: bool = False,
+) -> bool:
     try:
         output_path = path.with_suffix(".tokens") if write_output else None
         handler = NormHandler(output_path)
         h = Parser.from_file(path, handler)
+        h.enable_warnings = enable_warnings
         h.parse()
         handler.finish()
         return True
@@ -200,7 +211,10 @@ def tokenize_file(path: Path, write_output: bool = True, show_failed: bool = Tru
 
 
 def tokenize_directory(
-    path: Path, write_output: bool = True, show_failed: bool = True
+    path: Path,
+    write_output: bool = True,
+    show_failed: bool = True,
+    enable_warnings: bool = False,
 ) -> Tuple[int, int]:
     count, failed = 0, 0
     for root, _, filenames in os.walk(path):
@@ -208,7 +222,7 @@ def tokenize_directory(
             path = Path(root) / filename
             if path.suffix == '.krn' and not path.name.startswith("."):
                 count += 1
-                if not tokenize_file(path, write_output, show_failed):
+                if not tokenize_file(path, write_output, show_failed, enable_warnings):
                     failed += 1
                     print(f"{path}")
     return count, failed
@@ -222,7 +236,14 @@ def tokenize_directory(
               help="Displays the path of files we failed to tokenize.")
 @click.option("--no-output", "no_output", is_flag=True,
               help="Don't write out the .tokens file, simply parse.")
-def tokenize(source: List[Path], no_output: bool = False, show_failed: bool = True):
+@click.option("--enable-warnings", "enable_warnings", is_flag=True,
+              help="Enables parser warnings.")
+def tokenize(
+    source: List[Path],
+    no_output: bool = False,
+    show_failed: bool = True,
+    enable_warnings: bool = False
+):
     """Parses all .kern files in DATADIR and outputs a .tokens file.
 
     The .tokens file is essentially a simplified, normal form for the kern files:
@@ -236,11 +257,14 @@ def tokenize(source: List[Path], no_output: bool = False, show_failed: bool = Tr
     for path in [Path(s) for s in source]:
         if path.is_dir():
             dir_count, dir_failed = tokenize_directory(
-                path, write_output=not no_output, show_failed=show_failed)
+                path,
+                write_output=not no_output,
+                show_failed=show_failed, enable_warnings=enable_warnings
+            )
             count += dir_count
             failed += dir_failed
         else:
             count += 1
-            if not tokenize_file(path, write_output=not no_output, show_failed=show_failed):
+            if not tokenize_file(path, not no_output, show_failed, enable_warnings):
                 failed += 1
     print(f"Tokenized {count} files, {failed} failed.")

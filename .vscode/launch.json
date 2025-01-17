@@ -21,7 +21,7 @@
                 // "-n", "heavy", "predict", "--use-beam", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
                 // "-n", "heavy", "predict", "--use-full", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/maj2_up_m-51-56.jpg"
                 // "-n", "serious", "random-check", "--no-display", "100"
-                "tokenize", "--no-output", "/home/anselm/Downloads/KernSet/Chopin/mazurka06-1.krn"
+                "tokenize", "/home/anselm/Downloads/KernSet/haydn/keyboard/uesonatas/sonata62-2.krn"
             ]
         }
     ]

@@ -73,6 +73,13 @@ class TestHumdrumParser(unittest.TestCase):
             "*-\t*"
         )
 
+    def test_suggested_duration_note(self):
+        # joplin/elite.krn has a lot of this(!)
+        self.ok(
+            "**kern\n"
+            "4C C\n"
+        )
+
     def test_handler_called(self):
         mock_handler = Mock()
         handler_instance = mock_handler.return_value
@@ -160,6 +167,50 @@ class TestHumdrumParser(unittest.TestCase):
         self.parse_one_token("(<8qgg#/\n", Note(
             pitch=Pitch.gg,
             sharps=1,
+            duration=Duration(8, 0),
+            starts_slur=True,
+            is_gracenote=True
+        ))
+
+    def test_wrapped_note_token(self):
+        # https://kern.humdrum.org/cgi-bin/ksdata?location=users/craig/classical/chopin/mazurka&file=mazurka06-1.krn&format=info
+        self.parse_one_token("&(4B#&)\n", Note(
+            pitch=Pitch.B,
+            sharps=1,
+            starts_slur=True,
+            ends_slur=True,
+            duration=Duration(4, 0),
+        ))
+
+    def test_thrilled_note(self):
+        self.parse_one_token("4anT^\n", Note(
+            pitch=Pitch.a,
+            sharps=0, flats=0,
+            duration=Duration(4, 0),
+            is_upper_thrill=True
+        ))
+        self.parse_one_token("4ant^\n", Note(
+            pitch=Pitch.a,
+            sharps=0, flats=0,
+            duration=Duration(4, 0),
+            is_lower_thrill=True
+        ))
+
+    def test_random_stuff_i_ve_run_into(self):
+        self.parse_one_token("[</2b-\n", Note(
+            pitch=Pitch.b,
+            flats=1,
+            duration=Duration(2, 0),
+            starts_tie=True,
+        ))
+        self.parse_one_token("(16qqbbP\n", Note(
+            pitch=Pitch.bb,
+            duration=Duration(16, 0),
+            starts_slur=True,
+            is_gracenote=True
+        ))
+        self.parse_one_token("(8qqPee\n", Note(
+            pitch=Pitch.ee,
             duration=Duration(8, 0),
             starts_slur=True,
             is_gracenote=True
