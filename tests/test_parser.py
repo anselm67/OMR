@@ -34,6 +34,9 @@ class EmptyHandler(Parser[EmptySpine].Handler):
     def append(self, tokens: List[Tuple[EmptySpine, Token]]):
         pass
 
+    def done(self):
+        pass
+
 
 class TestHumdrumParser(unittest.TestCase):
 

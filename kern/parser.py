@@ -244,6 +244,10 @@ class Parser(Generic[T]):
         def append(self, tokens: List[Tuple[T, Token]]):
             pass
 
+        @abstractmethod
+        def done(self):
+            pass
+
     path: Union[str, Path]
     records: Iterator[str]
     lineno: int = 0
@@ -390,6 +394,7 @@ class Parser(Generic[T]):
         while True:
             line = cast(str, self.next())
             if not line:
+                self.handler.done()
                 return
             text_tokens = line.split("\t")
             if len(text_tokens) != len(self.spines):

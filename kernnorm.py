@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import Callable, Dict, Iterator, List, Optional, TextIO, Tuple, Type, cast
+from typing import Any, Callable, Dict, List, Optional, TextIO, Tuple, Type, Union, cast
 
 import click
 
@@ -116,16 +116,13 @@ class TokenFormatter:
             token.__class__, self.format_unknown)(spine, token)
 
 
-class NormHandler(Parser[Spine].Handler):
+class BaseHandler(Parser[Spine].Handler):
 
-    formatter: TokenFormatter = TokenFormatter()
-    output: Optional[TextIO]
     spines: List[Spine]
 
-    def __init__(self, output_path: Optional[Path]):
-        super(NormHandler, self).__init__()
+    def __init__(self):
+        super(BaseHandler, self).__init__()
         self.spines = list([])
-        self.output = output_path and open(output_path, 'w+')
 
     def position(self, spine) -> int:
         return self.spines.index(spine)
@@ -156,6 +153,16 @@ class NormHandler(Parser[Spine].Handler):
     def rename_spine(self, spine: Spine, name: str):
         pass
 
+
+class NormHandler(BaseHandler):
+
+    formatter: TokenFormatter = TokenFormatter()
+    output: Optional[TextIO]
+
+    def __init__(self, output_path: Optional[Path]):
+        super(NormHandler, self).__init__()
+        self.output = output_path and open(output_path, 'w+')
+
     last_metric: Optional[Meter] = None
 
     def should_skip(self, tokens: List[Tuple[Spine, Token]]) -> bool:
@@ -185,24 +192,51 @@ class NormHandler(Parser[Spine].Handler):
                 self.formatter.format(spine, token)for spine, token in tokens
             ]) + "\n")
 
-    def finish(self):
+    def done(self):
         if self.output:
             self.output.close()
 
 
-def tokenize_file(
+class StatsHandler(BaseHandler):
+
+    bar_count: int = 0
+    chord_count: int = 0
+    finish: Optional[Callable[['StatsHandler'], None]]
+
+    def __init__(self, finish: Optional[Callable[['StatsHandler'], None]] = None):
+        super(StatsHandler, self).__init__()
+        self.finish = finish
+
+    def has(self, cls, tokens) -> bool:
+        return any([isinstance(token, cls) for _, token in tokens])
+
+    def append(self, tokens: List[Tuple[Spine, Token]]):
+        tokens = [(spine, token) for spine, token in tokens
+                  if not isinstance(spine, IgnoredSpine)]
+        if self.has(Bar, tokens):
+            self.bar_count += 1
+        if self.has(Note, tokens) or self.has(Chord, tokens):
+            self.chord_count += 1
+
+    def done(self):
+        if self.finish is not None:
+            self.finish(self)
+
+
+def parse_file(
     path: Path,
-    write_output: bool = True,
+    handler_obj: Union[Parser.Handler, Callable[[], Parser.Handler]],
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> bool:
     try:
-        output_path = path.with_suffix(".tokens") if write_output else None
-        handler = NormHandler(output_path)
-        h = Parser.from_file(path, handler)
-        h.enable_warnings = enable_warnings
-        h.parse()
-        handler.finish()
+        if isinstance(handler_obj, Parser.Handler):
+            handler = cast(Parser.Handler, handler_obj)
+        else:
+            handler = cast(Callable[[], Parser.Handler], handler_obj)()
+        parser = Parser.from_file(path, handler)
+        parser.enable_warnings = enable_warnings
+        parser.parse()
         return True
     except Exception as e:
         if show_failed:
@@ -210,9 +244,9 @@ def tokenize_file(
         return False
 
 
-def tokenize_directory(
+def parse_directory(
     path: Path,
-    write_output: bool = True,
+    handler_factory: Callable[[], Parser.Handler],
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> Tuple[int, int]:
@@ -222,10 +256,51 @@ def tokenize_directory(
             path = Path(root) / filename
             if path.suffix == '.krn' and not path.name.startswith("."):
                 count += 1
-                if not tokenize_file(path, write_output, show_failed, enable_warnings):
+                if not parse_file(path, handler_factory, show_failed, enable_warnings):
                     failed += 1
                     print(f"{path}")
     return count, failed
+
+
+def tokenize_directory(
+    path: Path,
+    write_output: bool = True,
+    show_failed: bool = True,
+    enable_warnings: bool = False,
+) -> Tuple[int, int]:
+    def handler_factory() -> Parser.Handler:
+        output_path = path.with_suffix(".tokens") if write_output else None
+        handler = NormHandler(output_path)
+        return handler
+
+    return parse_directory(path, handler_factory, show_failed, enable_warnings)
+
+
+def stats_directory(
+    path: Path,
+    show_failed: bool = True,
+    enable_warnings: bool = False,
+) -> Dict[str, Any]:
+    chord_count = 0
+    bar_count = 0
+
+    def reduce(handler: StatsHandler):
+        nonlocal chord_count, bar_count
+        chord_count += handler.chord_count
+        bar_count += handler.bar_count
+
+    def handler_factory() -> Parser.Handler:
+        return StatsHandler(reduce)
+
+    result = parse_directory(path, handler_factory,
+                             show_failed, enable_warnings)
+
+    return {
+        "file_count": result[0],
+        "failed_count": result[1],
+        "chord_count": chord_count,
+        "bar_count": bar_count,
+    }
 
 
 @click.command()
@@ -265,6 +340,41 @@ def tokenize(
             failed += dir_failed
         else:
             count += 1
-            if not tokenize_file(path, not no_output, show_failed, enable_warnings):
+            output_path = None if no_output else path.with_suffix(".tokens")
+            handler = NormHandler(output_path)
+            if not parse_file(path, handler, show_failed, enable_warnings):
                 failed += 1
     print(f"Tokenized {count} files, {failed} failed.")
+
+
+@click.command()
+@click.argument("source", nargs=-1,
+                type=click.Path(dir_okay=True, exists=True, readable=True),
+                required=True)
+def kern_stats(
+    source: List[Path],
+    enable_warnings: bool = False
+):
+    """Parses all .kern files in DATADIR and computes some stats.
+
+    Args:
+        datadir (Path): The directory or file to inspect and tokenize.
+    """
+    for path in [Path(s) for s in source]:
+        if path.is_dir():
+            stats = stats_directory(path, enable_warnings=enable_warnings)
+            print(
+                f"file count : {stats['file_count']:,}\n"
+                f"bad files  : {stats['failed_count']:,}\n"
+                f"bar count  : {stats['bar_count']:,}\n"
+                f"chord count: {stats['chord_count']:,}\n"
+            )
+        else:
+            handler = StatsHandler()
+            if not parse_file(path, handler, enable_warnings=enable_warnings):
+                print(f"Failed to parse file {path}.")
+            else:
+                print(
+                    f"bar count  : {handler.bar_count:,}\n"
+                    f"chord count: {handler.chord_count:,}\n"
+                )

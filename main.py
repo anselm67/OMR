@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from click_context import ClickContext
 from client import infos, predict, random_check
 from grandpiano import histo, load, make_vocab, refresh_list, stats
-from kernnorm import tokenize
+from kernnorm import kern_stats, tokenize
 from train import train
 
 
@@ -93,6 +93,7 @@ cli.add_command(random_check)
 
 # kernnom / aka tokenizer commands.
 cli.add_command(tokenize)
+cli.add_command(kern_stats)
 
 if __name__ == '__main__':
     cli()
