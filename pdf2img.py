@@ -223,77 +223,75 @@ def line_indices(lines: List[int]) -> List[Tuple[int, int]]:
     return out
 
 
-def find_staff(image: MatLike) -> Staff:
-    staff = Staff(
+def find_staff(image: MatLike, do_plot: bool = True) -> Staff:
+    # Computes the vertical and horizontal projections.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 2))
+    staff_lines = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+    staff_lines = image
+    staff_lines = cv2.bitwise_not(staff_lines)
+    y_lines = np.sum(staff_lines, 1)
+    x_lines = np.sum(staff_lines, 0)
+
+    # Computes the moving average of the y projection and gets the peaks
+    # of this series to obtain the rough position of each staff.
+    wsize = 50
+    y_proj = np.zeros(y_lines.shape)
+    offset = (wsize - 1) // 2
+    y_avg = np.convolve(y_lines, np.ones(wsize) / wsize, mode='valid')
+    y_proj[offset:offset+len(y_avg)] = y_avg
+    # The width=30 is the max allowed for chopin/mazurka/mazurka07-3
+    staff_peaks, _ = find_peaks(y_proj, width=30, distance=50)
+
+    # Around each staff peak, find the peaks corresponding to each staff line.
+    staff_lines = []
+    for peak in staff_peaks:
+        staff_range = y_lines[peak-40:peak+40]
+        line_peaks, properties = find_peaks(
+            staff_range, height=75000, distance=7)
+        if len(line_peaks) > 5:
+            # We're pretty lax on our find_peaks() param, in case we
+            # get too many peaks, we throw the smallest ones out.
+            sorted_peaks = sorted(
+                zip(line_peaks, properties['peak_heights'].tolist()),
+                key=lambda x: x[1],
+                reverse=True
+            )
+            line_peaks = [line_peak for line_peak, _ in sorted_peaks]
+            line_peaks = line_peaks[:5]
+
+        staff_lines.extend([p+peak-40 for p in line_peaks])
+
+    staff_lines = sorted(staff_lines)
+
+    if do_plot:
+        plt.subplot()
+        plt.plot(y_lines, 'b', label='y_lines')
+        plt.vlines(staff_peaks, ymin=0, ymax=300000, colors='r')
+        plt.vlines(staff_lines, ymin=0, ymax=100000, colors='g')
+        plt.show()
+
+    staff_range = Staff(
         top_offset=0,
         left=0, right=0,
         positions=[],
     )
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 2))
-    lines = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
-    lines = image
-    lines = cv2.bitwise_not(lines)
-    y_lines = np.sum(lines, 1)
-    x_lines = np.sum(lines, 0)
+    staff_range = replace(staff_range, top_offset=staff_lines[0])
 
-    plt.subplot()
-    plt.plot(y_lines, 'b', label='y_lines')
-    window_size = 50
-    pad = (window_size - 1) // 2
-    xx = np.zeros(y_lines.shape)
-    vals = np.convolve(y_lines, np.ones(window_size) /
-                       window_size, mode='valid')
-    xx[pad:pad+len(vals)] = vals
-    plt.plot(xx, 'r', label='convol')
-
-    # The width=30 is the max allowed for chopin/mazurka/mazurka07-3
-    peaks, _ = find_peaks(xx, width=30, distance=50)
-    print(f"{len(peaks)}: {peaks}")
-    plt.vlines(peaks, ymin=0, ymax=300000, colors='r')
-
-    lines = []
-    for peak in peaks:
-        staff = y_lines[peak-40:peak+40]
-        line_peaks, properties = find_peaks(
-            staff, height=75000, distance=7)
-        heights = properties['peak_heights']
-        if len(line_peaks) > 5:
-            x = sorted(
-                zip(line_peaks, heights.tolist()),
-                key=lambda x: x[1],
-                reverse=True
-            )
-            line_peaks = [line_peak for line_peak, _ in x]
-            line_peaks = line_peaks[:5]
-
-        new_peaks = [p+peak-40 for p in line_peaks]
-        lines = lines + new_peaks
-
-    lines = sorted(lines)
-
-    plt.vlines(lines, ymin=0, ymax=100000, colors='g')
-    # plt.show()
-
-    staff = Staff(
-        0, 0, 0, []
-    )
-    staff = replace(staff, top_offset=lines[0])
-
-    if len(lines) % 10 != 0:
+    if len(staff_lines) % 10 != 0:
         raise ValueError(
-            f"Number of lines {len(lines)} should be divisible by 10."
+            f"Number of lines {len(staff_lines)} should be divisible by 10."
         )
     else:
-        staff = replace(staff, positions=[
-            (lines[ridx], lines[lidx]) for ridx, lidx in line_indices(lines)])
+        staff_range = replace(staff_range, positions=[
+            (staff_lines[ridx], staff_lines[lidx]) for ridx, lidx in line_indices(staff_lines)])
 
     # Left and right are top and last offsets of vertical lines.
     x = np.nonzero(x_lines)[0]
     if x.size == 0:
         raise ValueError(f"margin-detection: we got a blank image?")
-    staff = replace(staff, left=x[0], right=x[-1])
+    staff_range = replace(staff_range, left=x[0], right=x[-1])
 
-    return staff
+    return staff_range
 
 
 def histo(a: MatLike) -> bool:
@@ -329,24 +327,26 @@ def list(datadir: Path) -> List[Path]:
 
 
 @click.command()
-def all():
+@click.option("--plot", "do_plot", is_flag=True, default=False)
+def all(do_plot: bool):
     dataset = list(Path("/home/anselm/Downloads/KernSheet/chopin/mazurka"))
     for path in dataset:
         print(path)
         pages = pdf2numpy(path)
         for page in pages:
-            staff = find_staff(page)
+            staff = find_staff(page, do_plot=do_plot)
             image = draw_staff(staff, background=page)
             show(image)
 
 
 @click.command()
 @click.argument("path", type=click.Path(exists=False))
-def staff(path: Path):
+@click.option("--plot", "do_plot", is_flag=True, default=False)
+def staff(path: Path, do_plot: bool):
     path = Path(path)
     pages = pdf2numpy(path)
     for page in pages:
-        staff = find_staff(page)
+        staff = find_staff(page, do_plot=do_plot)
         image = draw_staff(staff, background=page)
         show(image)
 
