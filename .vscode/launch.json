@@ -4,7 +4,17 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
+        {
+            "name": "pdf2img",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "pdf2img.py",
+            "console": "integratedTerminal",
+            "args": [
+                "all"
+                // "staff", "/home/anselm/Downloads/KernSheet/chopin/mazurka/mazurka07-3"
+            ]
+        },
         {
             "name": "GrandPiano",
             "type": "debugpy",
@@ -22,7 +32,8 @@
                 // "-n", "heavy", "predict", "--use-full", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/maj2_up_m-51-56.jpg"
                 // "-n", "serious", "random-check", "--no-display", "100"
                 // "tokenize", "/home/anselm/Downloads/KernSheet/haydn/keyboard/uesonatas/sonata62-2.krn"
-                "kern-stats", "/home/anselm/Downloads/KernSheet"
+                "kern-stats",
+                "/home/anselm/Downloads/KernSheet"
             ]
         }
     ]

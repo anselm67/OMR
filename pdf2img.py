@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import List, Optional, Tuple, cast
 
+import click
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -119,6 +120,7 @@ points = []
 
 def click_event(event, x, y, flags, param):
     if event == cv2.EVENT_LBUTTONDOWN:
+        print(f"({x}, {y})")
         points.append((x, y))
         if len(points) == 2:
             x1, y1 = points[0]
@@ -134,7 +136,7 @@ def show(*images: MatLike,
     interrupted = False
     for image in images:
         height, width = image.shape[:2]
-        if height > max_height:
+        if max_height > 0 and height > max_height:
             new_width = int(max_height * width / height)
             image = cv2.resize(image, (new_width, max_height))
         cv2.imshow(window or "window", image)
@@ -234,6 +236,7 @@ def find_staff(image: MatLike) -> Staff:
     y_lines = np.sum(lines, 1)
     x_lines = np.sum(lines, 0)
 
+    plt.subplot()
     plt.plot(y_lines, 'b', label='y_lines')
     window_size = 50
     pad = (window_size - 1) // 2
@@ -241,10 +244,11 @@ def find_staff(image: MatLike) -> Staff:
     vals = np.convolve(y_lines, np.ones(window_size) /
                        window_size, mode='valid')
     xx[pad:pad+len(vals)] = vals
-    # plt.plot(xx, 'r', label='convol')
+    plt.plot(xx, 'r', label='convol')
 
-    peaks, _ = find_peaks(xx, width=40, distance=50)
-    print(peaks)
+    # The width=30 is the max allowed for chopin/mazurka/mazurka07-3
+    peaks, _ = find_peaks(xx, width=30, distance=50)
+    print(f"{len(peaks)}: {peaks}")
     plt.vlines(peaks, ymin=0, ymax=300000, colors='r')
 
     lines = []
@@ -262,8 +266,10 @@ def find_staff(image: MatLike) -> Staff:
             line_peaks = [line_peak for line_peak, _ in x]
             line_peaks = line_peaks[:5]
 
-        lines = lines + [p+peak-40 for p in line_peaks]
-        pass
+        new_peaks = [p+peak-40 for p in line_peaks]
+        lines = lines + new_peaks
+
+    lines = sorted(lines)
 
     plt.vlines(lines, ymin=0, ymax=100000, colors='g')
     # plt.show()
@@ -322,15 +328,39 @@ def list(datadir: Path) -> List[Path]:
     return files
 
 
-dataset = list(Path("/home/anselm/Downloads/KernSheet/chopin/mazurka"))
+@click.command()
+def all():
+    dataset = list(Path("/home/anselm/Downloads/KernSheet/chopin/mazurka"))
+    for path in dataset:
+        print(path)
+        pages = pdf2numpy(path)
+        for page in pages:
+            staff = find_staff(page)
+            image = draw_staff(staff, background=page)
+            show(image)
 
-for path in dataset:
-    print(path)
+
+@click.command()
+@click.argument("path", type=click.Path(exists=False))
+def staff(path: Path):
+    path = Path(path)
     pages = pdf2numpy(path)
     for page in pages:
         staff = find_staff(page)
         image = draw_staff(staff, background=page)
         show(image)
+
+
+@click.group
+def cli():
+    pass
+
+
+cli.add_command(all)
+cli.add_command(staff)
+
+if __name__ == "__main__":
+    cli()
 
 # for image in tl:
 #     staff = find_staff(image)
