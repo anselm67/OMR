@@ -76,7 +76,8 @@ def average_angle(image: MatLike, hough_thresold: int = 500) -> float:
     )
     hough_lines = hough_lines.squeeze(1)
     # Computes the median average angle:
-    return np.median(hough_lines[:, 1]).item()  # type: ignore
+    median_angle = np.median(hough_lines[:, 1])  # type: ignore
+    return np.degrees(median_angle) - 90.0
 
 
 def deskew(
@@ -84,11 +85,7 @@ def deskew(
     min_rotation_angle_degrees=0.05,
     hough_thresold: int = 240
 ):
-    def get_angle(image: MatLike) -> float:
-        avg_angle = average_angle(image, hough_thresold=hough_thresold)
-        return np.degrees(avg_angle) - 90.0
-
-    angle = get_angle(image)
+    angle = average_angle(image)
     if angle < min_rotation_angle_degrees:
         # For a 1200px width, 600px center to side:
         # height = 600 * sin(0.1 degrees) ~ 1 px
@@ -96,7 +93,7 @@ def deskew(
     height, width = image.shape
     matrix = cv2.getRotationMatrix2D((width // 2, height//2), angle, 1)
     image = cv2.warpAffine(image, matrix, (width, height))
-    print(f"\t{angle:2.4f} rotation => {get_angle(image):2.4f} degrees.")
+    print(f"\t{angle:2.4f} rotation => {average_angle(image):2.4f} degrees.")
     return image
 
 
@@ -260,7 +257,8 @@ def find_staff(orig_image: MatLike, do_plot: bool = True) -> Page:
     y_avg = np.convolve(y_lines, np.ones(wsize) / wsize, mode='valid')
     y_proj[offset:offset+len(y_avg)] = y_avg
     # The width=20 is the max allowed for chopin/mazurka/mazurka30-3
-    staff_peaks, _ = find_peaks(y_proj, width=20, distance=50, height=50000)
+    # Height of 45_000 is for mozart/piano/sonata/sonata01-1
+    staff_peaks, _ = find_peaks(y_proj, width=20, distance=50, height=45_000)
 
     # Around each staff peak, find the peaks corresponding to each staff line.
     staff_lines = []
@@ -280,9 +278,9 @@ def find_staff(orig_image: MatLike, do_plot: bool = True) -> Page:
             line_peaks = [line_peak for line_peak, _ in sorted_peaks]
             line_peaks = line_peaks[:5]
         elif len(line_peaks) < 5:
-            # Lower the thresold until we get 5 lines.
+            # Lowers the thresold until we get 5 lines.
             while peak_height > 0 and len(line_peaks) < 5:
-                peak_height -= 5000
+                peak_height -= 2500
                 line_peaks, properties = find_peaks(
                     staff_range, height=peak_height, distance=7)
         staff_lines.extend([p+peak-40 for p in line_peaks])
@@ -329,6 +327,9 @@ def list_directory(datadir: Path) -> List[Path]:
 
 
 @click.command()
+@click.argument("path",
+                type=click.Path(exists=True, file_okay=False, dir_okay=True),
+                default="/home/anselm/Downloads/KernSheet/")
 @click.option("--plot", "do_plot", is_flag=True, default=False,
               help="Debug - Plots various data as we go.")
 @click.option("--refresh", "refresh", is_flag=True, default=False,
@@ -337,15 +338,14 @@ def list_directory(datadir: Path) -> List[Path]:
               help="Don't use cached .numpy files, refresh them.")
 @click.option("--dont-show", "dont_show", is_flag=True, default=False,
               help="Don't show image + staff after processing.")
-def all(do_plot: bool, refresh: bool, dont_show: bool):
-    dataset = list_directory(
-        Path("/home/anselm/Downloads/KernSheet/chopin/mazurka"))
+def all(path: Path, do_plot: bool, refresh: bool, dont_show: bool):
+    dataset = list_directory(Path(path))
     for path in dataset:
         print(path)
         pages = pdf2numpy(path, refresh=refresh)
         for page in pages:
             staff = find_staff(page, do_plot=do_plot)
-            image = draw_staff(staff, background=page)
+            image = draw_staff(staff, background=page.copy())
             if (not dont_show) and show(image):
                 return
 
@@ -361,7 +361,7 @@ def staff(path: Path, do_plot: bool, refresh: bool):
     pages = pdf2numpy(path, refresh=refresh)
     for page in pages:
         staff = find_staff(page, do_plot=do_plot)
-        image = draw_staff(staff, background=page)
+        image = draw_staff(staff, background=page.copy())
         if show(image):
             return
 

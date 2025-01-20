@@ -11,8 +11,8 @@
             "program": "pdf2img.py",
             "console": "integratedTerminal",
             "args": [
-                "all"
-                // "staff", "--plot", "/home/anselm/Downloads/KernSheet/chopin/mazurka/mazurka30-3"
+                "all", "--refresh", "/home/anselm/Downloads/KernSheet/chopin/",
+                // "staff", "--plot", "/home/anselm/Downloads/KernSheet/beethoven/piano/sonata/sonata01-4"
             ]
         },
         {
