@@ -1,9 +1,10 @@
 midinorm.py
     Takes a midi stream, normalizes all tracks into one timeline that 
     it cuts it into bars, for alignment with the sheet music.
-pdf2img.py
-    Converts sheet music in pdf into aligned chunks corresponding 
-    to one line, with bar counts so it can be aligned with the midi file.
+staffer.py
+    Figures out the staves and bars position from a .pdf file Hopefullyu
+    I can align kern files against image bars and use that for training 
+    rather than synthetic data.
 midi/ 
     A midi file parser and generator.
 kern/
