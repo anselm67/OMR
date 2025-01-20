@@ -230,7 +230,6 @@ def find_bars(
     # A bar goes from top to bottom, so we can compute a min height for
     # our peak by assuming a percentage fill rate on that vertical line.
     peak_height = int(image.shape[0] * fill_rate * 255)
-    print(f"peak_height: {peak_height}")
     bar_peaks, properties = find_peaks(
         x_proj, distance=50,  height=peak_height)
     bar_peaks = [p.item() for p in bar_peaks]
