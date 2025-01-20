@@ -5,10 +5,10 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "pdf2img",
+            "name": "Staffer",
             "type": "debugpy",
             "request": "launch",
-            "program": "pdf2img.py",
+            "program": "staffer.py",
             "console": "integratedTerminal",
             "args": [
                 "all", "--refresh", "/home/anselm/Downloads/KernSheet/chopin/",
