@@ -57,7 +57,7 @@ class SpineHolder[T](ABC):
 
 class KernSpineHolder[T](SpineHolder):
 
-    OPEN_NOTE_RE = re.compile(r'^([N\&<>\{\[\(\)\]\}\\/yqP]+)(.*)$')
+    OPEN_NOTE_RE = re.compile(r'^\.*([ZN\&<>\{\[\(\)\]\}\\/yqP]+)(.*)$')
     NOTE_RE = re.compile(r'^(\d+%)?([\d]+)?(\.*)?([PQq]*)([a-gA-G]+)(.*)$')
 
     def error(self, msg: str):
@@ -130,7 +130,7 @@ class KernSpineHolder[T](SpineHolder):
     METRICAL_RE = re.compile(r'^\*met\(([cC]\|?)\)$')
 
     REST_RE = re.compile(
-        r'^(\d+%)?([N\&<>\{\[\(\)\]\}\\/y]*)([\d]+)?(\.*)r(.*)$')
+        r'^\.*Z*(\d+%)?-?([qN\&<>\{\[\(\)\]\}\\/y]*)([\d]+)?(\.*)r(.*)$')
     BAR_RE = re.compile(r'^=+.*$')
 
     def parse_event(self, text: str) -> Token:
@@ -143,6 +143,8 @@ class KernSpineHolder[T](SpineHolder):
             return Comment(text)
         elif (m := self.REST_RE.match(text)):
             percent, opening, duration_int, dots, left_over = m.groups()
+            if not duration_int:
+                duration_int = 0
             return Rest(Duration(int(duration_int), len(dots)))
         else:
             notes = list([])
@@ -353,16 +355,18 @@ class Parser(Generic[T]):
                 # Branch off into a new spine.
                 self.branch_spine(spine_holder)
             case '*v':
-                merged_some = False
+                holder = spine_holder
                 for next_spine, next_token in tokens_iterator:
                     if next_token == "*v":
-                        self.merge_spines(next_spine, spine_holder)
-                        merged_some = True
-                    elif merged_some:
+                        if holder:
+                            self.merge_spines(next_spine, spine_holder)
+                        else:
+                            holder = next_spine
+                    elif next_token == "*":
+                        holder = None
+                    else:
                         self.parse_spine_indicator(
                             next_spine, next_token, tokens_iterator)
-                    else:
-                        self.error("Invalid merge record.")
             case '*x':
                 self.error("Spine exchange not implemented.")
             case _ if self.SECTION_LABEL_RE.match(indicator):

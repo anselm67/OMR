@@ -69,6 +69,14 @@ class Pitch(Enum):
     aaaa = (7, 6)
     bbbb = (7, 7)
 
+    ccccc = (8, 1)
+    ddddd = (8, 2)
+    eeeee = (8, 3)
+    fffff = (8, 4)
+    ggggg = (8, 5)
+    aaaaa = (8, 6)
+    bbbbb = (8, 7)
+
     def order(self) -> int:
         return self.value[0] * 8 + self.value[1]
 

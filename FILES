@@ -23,3 +23,29 @@ model.py
     The translation model.
 train.py
     All train related commands.
+
+Building the KernSheet dataset ~/Downloads/KernSheet/:
+- *.krn: Original krn files mostly from the KernScore repository, piano only.
+- *.pdf: Matching pdf file when available.
+these files are computed with various tools:
+- *.tokens: The token files to feed the model with, from the .krn with:
+    # ./main.py tokenize ~/Downloads/KernSheet
+- *.numpy: Cached list of images corresponding to each pages of the pdf
+    file, transformed and ready for consumption by the model.
+    # ./staffer staff ~/Downloads/KernSheet
+
+    
+Converting a .krn file to pdfm with transposition:
+
+# ./verovio/tools/verovio -r ~/Downloads/verovio/data \
+    --transpose m2 \
+    ~/dataset/KernSheet/chopin/mazurka/mazurka06-1.krn -o output.svg
+# rsvg-convert output.svg -f pdf -o output-m2.pdf
+
+Converting a music xml file to .krn then to.pdf:
+# ./verovio/tools/verovio -r ~/Downloads/verovio/data \
+    -f musicxml-hum -t hum bwv_846.musicxml
+# ./verovio/tools/verovio -r ~/Downloads/verovio/data \
+    bwv_846.krn -o output.svg
+# rsvg-convert output.svg -f pdf -o output.pdf
+

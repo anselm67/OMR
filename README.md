@@ -12,3 +12,4 @@ This is not meant for public consumption yet.
 Datasets:
 - GrandStaff https://grfia.dlsi.ua.es/musicdocs/grandstaff.tgz
 - Kern repository http://kern.ccarh.org/
+- asap-dataset: https://github.com/fosfrancesco/asap-dataset

@@ -219,6 +219,17 @@ class TestHumdrumParser(unittest.TestCase):
             is_gracenote=True
         ))
 
+    def test_some_asap_dataset_tokens(self):
+        self.parse_one_token(".ZZZ16g#LL\n", Note(
+            pitch=Pitch.g,
+            duration=Duration(16, 0),
+            sharps=1,
+            starts_beam=2,
+        ))
+        self.parse_one_token("8%-3ryy\n", Rest(
+            duration=Duration(3, 0),
+        ))
+
 
 if __name__ == '__main__':
     unittest.main()
