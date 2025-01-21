@@ -225,7 +225,7 @@ class StatsHandler(BaseHandler):
 
 def parse_file(
     path: Path,
-    handler_obj: Union[Parser.Handler, Callable[[], Parser.Handler]],
+    handler_obj: Union[Parser.Handler, Callable[[Path], Parser.Handler]],
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> bool:
@@ -233,7 +233,7 @@ def parse_file(
         if isinstance(handler_obj, Parser.Handler):
             handler = cast(Parser.Handler, handler_obj)
         else:
-            handler = cast(Callable[[], Parser.Handler], handler_obj)()
+            handler = cast(Callable[[Path], Parser.Handler], handler_obj)(path)
         parser = Parser.from_file(path, handler)
         parser.enable_warnings = enable_warnings
         parser.parse()
@@ -246,7 +246,7 @@ def parse_file(
 
 def parse_directory(
     path: Path,
-    handler_factory: Callable[[], Parser.Handler],
+    handler_factory: Callable[[Path], Parser.Handler],
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> Tuple[int, int]:
@@ -268,8 +268,8 @@ def tokenize_directory(
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> Tuple[int, int]:
-    def handler_factory() -> Parser.Handler:
-        output_path = path.with_suffix(".tokens") if write_output else None
+    def handler_factory(source: Path) -> Parser.Handler:
+        output_path = source.with_suffix(".tokens") if write_output else None
         handler = NormHandler(output_path)
         return handler
 
@@ -289,7 +289,7 @@ def stats_directory(
         chord_count += handler.chord_count
         bar_count += handler.bar_count
 
-    def handler_factory() -> Parser.Handler:
+    def handler_factory(_: Path) -> Parser.Handler:
         return StatsHandler(reduce)
 
     result = parse_directory(path, handler_factory,
