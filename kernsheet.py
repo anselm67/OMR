@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+# To run this script, you'll need the following sources:
+# KERN_SCORES_URL List of url to download zipped kern files from KernScore dataset
+# A clone of https://github.com/fosfrancesco/asap-dataset
+# Once you have these available, run the following commands:
+# ./kernsheet.py make-kern-sheet TARGET_DIRECTORY
+# ./kernsheet.py merge-asap ASAP_DIRECTORY TARGET_DIRECTORY
+# At this point TARGET_DIRECTORY will contain the kernsheet dataset, with the
+# following stats:
+# file count : 689
+# bad files  : 18
+# bar count  : 72,808
+# chord count: 565,965
 
 import os
 import shutil
@@ -603,6 +615,24 @@ def verovio(file: Path, refresh: bool = False) -> bool:
     return True
 
 
+def is_likely_pdf(path: Path):
+    """
+    Checks if a file is likely a PDF by examining the first few bytes.
+
+    Args:
+    file_path: The path to the file.
+
+    Returns:
+    True if the file likely starts with a PDF header, False otherwise.
+    """
+    try:
+        with open(path, 'rb') as f:
+            header = f.read(5).decode('ascii')
+            return header.startswith('%PDF-')
+    except Exception as e:
+        return False
+
+
 @click.command()
 @click.argument("target_directory", type=click.Path(dir_okay=True, exists=False),
                 required=False,
@@ -964,6 +994,26 @@ def merge_asap(asap: Path, kern_sheet: Path):
             print(f"ASAP_MERGES: {src} not found.")
 
 
+@click.command()
+@click.argument("kern_sheet", required=False,
+                type=click.Path(file_okay=False, dir_okay=True, exists=True),
+                default="/home/anselm/datasets/kern-sheet")
+def cleanup_pdf(kern_sheet: Path):
+    total_count = 0
+    bad_count = 0
+    kern_sheet = Path(kern_sheet)
+    for root, _, filenames in os.walk(kern_sheet):
+        for filename in filenames:
+            file = Path(root) / filename
+            if file.suffix == ".pdf":
+                total_count += 1
+                if not is_likely_pdf(file):
+                    print(f"Removing {file}.")
+                    file.unlink()
+                    bad_count += 1
+    print(f"Total PDF count {total_count}, removed {bad_count}")
+
+
 @click.group
 def cli():
     pass
@@ -971,5 +1021,7 @@ def cli():
 
 cli.add_command(merge_asap)
 cli.add_command(make_kern_sheet)
+cli.add_command(cleanup_pdf)
+
 if __name__ == '__main__':
     cli()
