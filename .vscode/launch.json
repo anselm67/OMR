@@ -5,6 +5,16 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "KernSheet",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "kernsheet.py",
+            "console": "integratedTerminal",
+            "args": [
+                "merge-asap"
+            ]
+        },
+        {
             "name": "Staffer",
             "type": "debugpy",
             "request": "launch",

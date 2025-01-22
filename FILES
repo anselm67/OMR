@@ -23,7 +23,10 @@ model.py
     The translation model.
 train.py
     All train related commands.
+kernsheet.py
+    A tool to maintain and develop the KernSheet dataset.
 
+    
 Building the KernSheet dataset ~/Downloads/KernSheet/:
 - *.krn: Original krn files mostly from the KernScore repository, piano only.
 - *.pdf: Matching pdf file when available.
