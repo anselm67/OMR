@@ -11,7 +11,8 @@
             "program": "kernsheet.py",
             "console": "integratedTerminal",
             "args": [
-                "merge-asap"
+                // "merge-asap"
+                "cleanup-pdf"
             ]
         },
         {

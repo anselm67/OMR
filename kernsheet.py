@@ -12,12 +12,19 @@
 # bar count  : 72,808
 # chord count: 565,965
 
+import json
 import os
+import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
+from typing import Optional
 
 import click
+import requests
+from bs4 import BeautifulSoup
+from googlesearch import search
 
 KERN_SCORES_URL = {
     "classical": "https://kern.humdrum.org/cgi-bin/ksdata?l=/users/craig/classical&format=zip",
@@ -633,6 +640,100 @@ def is_likely_pdf(path: Path):
         return False
 
 
+def google_imslp_page(query: str) -> str:
+    try:
+        for result in search(query):
+            if str(result).startswith("https://imslp.org"):
+                return str(result)
+    except Exception as e:
+        print(f"IMSLP query {query} failed:\n\t{e}")
+    raise FileNotFoundError(f"No imslp for query {query}")
+
+
+COMPLETE_SCORE_RE = re.compile(r'^.*Complete Score.*$')
+
+
+def imslp_download_link(content: bytes) -> Optional[str]:
+    soup = BeautifulSoup(content, "html.parser")
+    for a in soup.find_all("a"):
+        if a.has_attr("rel") and "nofollow" in a["rel"]:
+            span = a.find("span")
+            if span and span["title"] == "Download this file":
+                if COMPLETE_SCORE_RE.match(span.text):
+                    return a["href"]
+    return None
+
+
+# IMSLP_COOKIES = r'imslp_wikiLanguageSelectorLanguage=en; chatbase_anon_id=d8925c94-d976-492a-9649-e563f973d8a2; imslpdisclaimeraccepted=yes; __stripe_mid=5d13801d-837c-4919-8e35-88de460c440b313847; _gid=GA1.2.642930185.1737548859; __stripe_sid=d726e726-eeea-4292-b94d-715cac65d6979cf564; _ga_4QW4VCTZ4E=GS1.1.1737559129.13.1.1737560753.0.0.0; _ga=GA1.2.1606208118.1735899643; _ga_8370FT5CWW=GS1.2.1737559147.12.1.1737560755.0.0.0'
+IMSLP_COOKIES = {
+    "imslp_wikiLanguageSelectorLanguage": "en",
+    "chatbase_anon_id": "d8925c94-d976-492a-9649-e563f973d8a2",
+    "imslpdisclaimeraccepted": "yes",
+}
+
+
+def load_pdf(query: str, verbose: bool = True) -> Optional[str]:
+    try:
+        if verbose:
+            print(f"\tQuerying google for {query}...")
+        imslp = google_imslp_page(query)
+        # Fetches the page and find the download link.
+        response = requests.get(imslp)
+        response.raise_for_status()
+
+        url = imslp_download_link(response.content)
+        if url is None:
+            print(f"Failed to find download link in {imslp}")
+            return
+
+        # Actually fetch the pdf bytes, rquires a cookie.
+        if verbose:
+            print(f"\tFetching IMSLP download page at {url}")
+        response = requests.get(url, cookies=IMSLP_COOKIES)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+        for span in soup.find_all("span"):
+            if span.has_attr("id") and span["id"] == "sm_dl_wait":
+                return span["data-id"]
+
+    except Exception as e:
+        print(f"IMSLP query {query} failed:\n\t{e}")
+        return None
+
+
+def save_url(url: str, into: Path):
+    print(f"\tSaving {url} to {into}")
+    try:
+        response = requests.get(url)
+        with open(into, "wb+") as fp:
+            fp.write(response.content)
+        return True
+    except Exception as e:
+        print(f"Failed to fetch url: {url}\n\t{e}")
+        return False
+
+
+COM_RE = re.compile(r'^!!!COM:\s+(.*)$')
+OTL_RE = re.compile(r'^!!!OTL:\s+(.*)$')
+
+
+def extract_query(kern_file: Path) -> Optional[str]:
+    author, work = None, None
+    with open(kern_file, "r") as fp:
+        for line in fp:
+            if not line.startswith("!!!"):
+                return None
+            line = line.strip()
+            if (m := COM_RE.match(line)):
+                author = m.group(1)
+            elif (m := OTL_RE.match(line)):
+                work = m.group(1)
+            if author and work:
+                return f"imslp {author} {work}"
+    return None
+
+
 @click.command()
 @click.argument("target_directory", type=click.Path(dir_okay=True, exists=False),
                 required=False,
@@ -890,15 +991,7 @@ ASAP_MERGES = [
     ("Liszt/Transcendental_Etudes/5/xml_score.krn",
      "liszt/etudes/transcendental/etude5.krn"),
     ("Liszt/Transcendental_Etudes/9/xml_score.krn",
-     "liszt/etudes/transcendental/etude9.krn"),
-
-    ("Liszt/Hungarian_Rhapsodies/6/xml_score.krn",
-     "liszt/hungarian_rhapsodies/rhapsodies6.krn"),
-    ("Liszt/Mephisto_Waltz/xml_score.krn",
-     "liszt/mephisto_waltz/mephisto_waltz.krn"),
-    ("Liszt/Sonata/xml_score.krn", "liszt/sonata/sonata.krn"),
-
-    ("Mozart/Fantasie_475/xml_score.krn", "mozart/fantasies/fantasie475.krn"),
+     "liszt/etudes/transcendental/etudsave.krn", "mozart/fantasies/fantasie475.krn"),
     ("Mozart/Piano_Sonatas/11-3/xml_score.krn", ""),
     ("Mozart/Piano_Sonatas/12-1/xml_score.krn", ""),
     ("Mozart/Piano_Sonatas/12-2/xml_score.krn", ""),
@@ -994,6 +1087,17 @@ def merge_asap(asap: Path, kern_sheet: Path):
             print(f"ASAP_MERGES: {src} not found.")
 
 
+def add_pdf_catalog(kern_sheet: Path, file: Path, url: str):
+    path = Path(kern_sheet) / "catalog.json"
+    obj = {}
+    if path.exists():
+        with open(path, "r") as fp:
+            obj = json.load(fp)
+    obj[str(path_substract(kern_sheet, file))] = url
+    with open(path, "w+") as fp:
+        json.dump(obj, fp, indent=4)
+
+
 @click.command()
 @click.argument("kern_sheet", required=False,
                 type=click.Path(file_okay=False, dir_okay=True, exists=True),
@@ -1005,6 +1109,22 @@ def cleanup_pdf(kern_sheet: Path):
     for root, _, filenames in os.walk(kern_sheet):
         for filename in filenames:
             file = Path(root) / filename
+            if file.suffix == ".krn" and not file.with_suffix(".pdf").exists():
+                total_count += 1
+                time.sleep(15)
+                if not (query := extract_query(file)):
+                    print(f"Couldn't extract query from {file}.")
+                    bad_count += 1
+                    continue
+                pdf_url = load_pdf(query)
+                if pdf_url is None:
+                    print(f"Failed to find url for {file}.")
+                    bad_count += 1
+                else:
+                    add_pdf_catalog(kern_sheet, file, pdf_url)
+                    if not save_url(pdf_url, file.with_suffix(".pdf")):
+                        bad_count += 1
+                continue
             if file.suffix == ".pdf":
                 total_count += 1
                 if not is_likely_pdf(file):
