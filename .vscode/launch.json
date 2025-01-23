@@ -12,7 +12,9 @@
             "console": "integratedTerminal",
             "args": [
                 // "merge-asap"
-                "cleanup-pdf"
+                // "cleanup-pdf"
+                // "do"
+                "staff", "/home/anselm/datasets/kern-sheet", "bach/inventions/inven13"
             ]
         },
         {
@@ -22,7 +24,7 @@
             "program": "staffer.py",
             "console": "integratedTerminal",
             "args": [
-                "all", "--refresh", "/home/anselm/Downloads/KernSheet/chopin/",
+                "staff","/home/anselm/Downloads/KernSheet/chopin/",
                 // "staff", "--plot", "/home/anselm/Downloads/KernSheet/beethoven/piano/sonata/sonata01-4"
             ]
         },

@@ -13,18 +13,26 @@
 # chord count: 565,965
 
 import json
+import logging
 import os
+import pickle
 import re
 import shutil
 import subprocess
 import time
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Optional
+from typing import Dict, List, Optional, Tuple, cast
+from urllib.parse import quote
 
 import click
 import requests
 from bs4 import BeautifulSoup
+from cv2.typing import MatLike
 from googlesearch import search
+
+from imslp import IMSLP
+from staffer import Staffer
 
 KERN_SCORES_URL = {
     "classical": "https://kern.humdrum.org/cgi-bin/ksdata?l=/users/craig/classical&format=zip",
@@ -991,7 +999,18 @@ ASAP_MERGES = [
     ("Liszt/Transcendental_Etudes/5/xml_score.krn",
      "liszt/etudes/transcendental/etude5.krn"),
     ("Liszt/Transcendental_Etudes/9/xml_score.krn",
-     "liszt/etudes/transcendental/etudsave.krn", "mozart/fantasies/fantasie475.krn"),
+     "liszt/etudes/transcendental/etude9.krn"),
+
+    ("Liszt/Hungarian_Rhapsodies/6/xml_score.krn",
+     "liszt/hungarian_rhapsodies/rhapsodies6.krn"),
+    ("Liszt/Mephisto_Waltz/xml_score.krn",
+     "liszt/mephisto_waltz/mephisto_waltz.krn"),
+    ("Liszt/Sonata/xml_score.krn", "liszt/sonata/sonata.krn"),
+
+    ("Mozart/Fantasie_475/xml_score.krn",
+     "mozart/fantasies/fantasie475.krn"),
+
+
     ("Mozart/Piano_Sonatas/11-3/xml_score.krn", ""),
     ("Mozart/Piano_Sonatas/12-1/xml_score.krn", ""),
     ("Mozart/Piano_Sonatas/12-2/xml_score.krn", ""),
@@ -1052,8 +1071,127 @@ ASAP_MERGES = [
     ("Scriabin/Sonatas/5/xml_score.krn", "scriabin/sonatas/sonata5.krn"),
 ]
 
-# asap duplicates, (kernscores, matching asap)
+# asap duplicates, in (kernscores, matching asap) format:
 # (chopin/ballade/ballade52.krn chopin/ballades/4/ballade-4.krn)
+
+
+@dataclass(frozen=True)
+class Entry:
+    kern_file: str
+
+    imslp_url: str
+    pdf_urls: List[str]
+
+    # The source dataset for this entry, "kern-score/*.zip" or "asap"
+    source: Optional[str] = ""
+
+    @staticmethod
+    def from_dict(data):
+        return Entry(**data)
+
+
+@dataclass(frozen=True)
+class Catalog:
+    version: int = 1
+
+    entries: Dict[str, Entry] = field(default_factory=dict)
+
+
+class KernSheet:
+    CATALOG_NAME = "catalog.json"
+
+    datadir: Path
+    version: int = 1
+
+    def __init__(self, datadir: Path):
+        super().__init__()
+        self.datadir = Path(datadir)
+        self.load_catalog()
+
+    def load_catalog(self):
+        path = self.datadir / self.CATALOG_NAME
+        self.version = 1
+        self.entries = {}
+        if path.exists():
+            with open(path, "r") as fp:
+                obj = json.load(fp)
+            self.version = obj["version"]
+            self.entries = {kern_file: Entry.from_dict(
+                entry_dict) for kern_file, entry_dict in obj["entries"].items()}
+
+    def save_catalog(self):
+        path = self.datadir / self.CATALOG_NAME
+        with open(path, "w+") as fp:
+            json.dump({
+                "version": 1,
+                "entries": {
+                    k: asdict(replace(e, kern_file=str(k))) for k, e in self.entries.items()
+                }
+            }, fp, indent=4)
+
+    KERN_SCORE_URL = "https://kern.humdrum.org/cgi-bin/ksdata?location=users/craig/classical/"
+
+    def kernscore_url(self, kern_file: Path) -> str:
+        return (
+            self.KERN_SCORE_URL + str(kern_file.parent) +
+            f"&file={quote(kern_file.name)}&format=pdf"
+        )
+
+    def missing(self):
+        """Checks for orphaned .krn files with no entries in the catalog.
+        """
+        total_count = 0
+        miss_count = 0
+        for root, _, filenames in os.walk(self.datadir):
+            for filename in filenames:
+                file = Path(root) / filename
+                if file.suffix == ".krn":
+                    total_count += 1
+                    kern_file = path_substract(self.datadir, file)
+                    if not str(kern_file) in self.entries:
+                        miss_count += 1
+        print(f"{total_count} kern files, {miss_count} missing.")
+
+    KERN_KEYWORDS_RE = re.compile(r'^!!!(COM|OPR|OTL|OPS):\s*(.*)$')
+
+    def google_keywords(self, kern_file: str) -> str:
+        keywords = ""
+        # Checks inside the file for COM and OTL:
+        with open(self.datadir / kern_file, "r") as fp:
+            for line in fp:
+                line = line.strip()
+                if not line.startswith("!!!"):
+                    break
+                elif (m := self.KERN_KEYWORDS_RE.match(line)):
+                    keywords += f" {m.group(2).lower()}"
+        # Adds in the path components:
+        path_str = str(Path(kern_file).with_suffix(""))
+        keywords += " " + re.sub(r'[^\w]+', " ", path_str.lower()).strip()
+        return " ".join(keywords.split()) + " site:imslp.org"
+
+    def fix_imslp(self):
+        imslp = IMSLP()
+        for key, entry in self.entries.items():
+            if entry.imslp_url:
+                continue
+            imslp_url = imslp.find_imslp(self.google_keywords(entry.kern_file))
+            if imslp_url is not None:
+                self.entries[key] = replace(entry, imslp_url=imslp_url)
+            self.save_catalog()
+            time.sleep(15)
+
+    def staff(self, kern_path: str) -> List[Tuple[MatLike, Staffer.Page]]:
+        path = self.datadir / kern_path
+        pkl_path = path.with_suffix(".pkl")
+        if path.with_suffix(".pkl").exists():
+            with open(pkl_path, "rb") as fp:
+                data = cast(List[Tuple[MatLike, Staffer.Page]], pickle.load(fp))
+        else:
+            staffer = Staffer(path)
+            data = staffer.staff()
+            with open(pkl_path, "wb+") as fp:
+                pickle.dump(data, fp)
+        return data
 
 
 @click.command()
@@ -1087,51 +1225,20 @@ def merge_asap(asap: Path, kern_sheet: Path):
             print(f"ASAP_MERGES: {src} not found.")
 
 
-def add_pdf_catalog(kern_sheet: Path, file: Path, url: str):
-    path = Path(kern_sheet) / "catalog.json"
-    obj = {}
-    if path.exists():
-        with open(path, "r") as fp:
-            obj = json.load(fp)
-    obj[str(path_substract(kern_sheet, file))] = url
-    with open(path, "w+") as fp:
-        json.dump(obj, fp, indent=4)
+@click.command()
+def do():
+    kern_sheet = KernSheet(Path("/home/anselm/datasets/kern-sheet"))
+    kern_sheet.fix_imslp()
 
 
 @click.command()
-@click.argument("kern_sheet", required=False,
-                type=click.Path(file_okay=False, dir_okay=True, exists=True),
-                default="/home/anselm/datasets/kern-sheet")
-def cleanup_pdf(kern_sheet: Path):
-    total_count = 0
-    bad_count = 0
-    kern_sheet = Path(kern_sheet)
-    for root, _, filenames in os.walk(kern_sheet):
-        for filename in filenames:
-            file = Path(root) / filename
-            if file.suffix == ".krn" and not file.with_suffix(".pdf").exists():
-                total_count += 1
-                time.sleep(15)
-                if not (query := extract_query(file)):
-                    print(f"Couldn't extract query from {file}.")
-                    bad_count += 1
-                    continue
-                pdf_url = load_pdf(query)
-                if pdf_url is None:
-                    print(f"Failed to find url for {file}.")
-                    bad_count += 1
-                else:
-                    add_pdf_catalog(kern_sheet, file, pdf_url)
-                    if not save_url(pdf_url, file.with_suffix(".pdf")):
-                        bad_count += 1
-                continue
-            if file.suffix == ".pdf":
-                total_count += 1
-                if not is_likely_pdf(file):
-                    print(f"Removing {file}.")
-                    file.unlink()
-                    bad_count += 1
-    print(f"Total PDF count {total_count}, removed {bad_count}")
+@click.argument("datadir",
+                type=click.Path(file_okay=True, dir_okay=True),
+                default="/home/anselm/Downloads/kern-sheet/")
+@click.argument("kern_path", type=str, required=True)
+def staff(datadir: Path, kern_path: str):
+    kern_sheet = KernSheet(datadir)
+    kern_sheet.staff(kern_path)
 
 
 @click.group
@@ -1139,9 +1246,11 @@ def cli():
     pass
 
 
-cli.add_command(merge_asap)
 cli.add_command(make_kern_sheet)
-cli.add_command(cleanup_pdf)
+cli.add_command(merge_asap)
+cli.add_command(do)
+cli.add_command(staff)
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     cli()
