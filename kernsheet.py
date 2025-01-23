@@ -648,100 +648,6 @@ def is_likely_pdf(path: Path):
         return False
 
 
-def google_imslp_page(query: str) -> str:
-    try:
-        for result in search(query):
-            if str(result).startswith("https://imslp.org"):
-                return str(result)
-    except Exception as e:
-        print(f"IMSLP query {query} failed:\n\t{e}")
-    raise FileNotFoundError(f"No imslp for query {query}")
-
-
-COMPLETE_SCORE_RE = re.compile(r'^.*Complete Score.*$')
-
-
-def imslp_download_link(content: bytes) -> Optional[str]:
-    soup = BeautifulSoup(content, "html.parser")
-    for a in soup.find_all("a"):
-        if a.has_attr("rel") and "nofollow" in a["rel"]:
-            span = a.find("span")
-            if span and span["title"] == "Download this file":
-                if COMPLETE_SCORE_RE.match(span.text):
-                    return a["href"]
-    return None
-
-
-# IMSLP_COOKIES = r'imslp_wikiLanguageSelectorLanguage=en; chatbase_anon_id=d8925c94-d976-492a-9649-e563f973d8a2; imslpdisclaimeraccepted=yes; __stripe_mid=5d13801d-837c-4919-8e35-88de460c440b313847; _gid=GA1.2.642930185.1737548859; __stripe_sid=d726e726-eeea-4292-b94d-715cac65d6979cf564; _ga_4QW4VCTZ4E=GS1.1.1737559129.13.1.1737560753.0.0.0; _ga=GA1.2.1606208118.1735899643; _ga_8370FT5CWW=GS1.2.1737559147.12.1.1737560755.0.0.0'
-IMSLP_COOKIES = {
-    "imslp_wikiLanguageSelectorLanguage": "en",
-    "chatbase_anon_id": "d8925c94-d976-492a-9649-e563f973d8a2",
-    "imslpdisclaimeraccepted": "yes",
-}
-
-
-def load_pdf(query: str, verbose: bool = True) -> Optional[str]:
-    try:
-        if verbose:
-            print(f"\tQuerying google for {query}...")
-        imslp = google_imslp_page(query)
-        # Fetches the page and find the download link.
-        response = requests.get(imslp)
-        response.raise_for_status()
-
-        url = imslp_download_link(response.content)
-        if url is None:
-            print(f"Failed to find download link in {imslp}")
-            return
-
-        # Actually fetch the pdf bytes, rquires a cookie.
-        if verbose:
-            print(f"\tFetching IMSLP download page at {url}")
-        response = requests.get(url, cookies=IMSLP_COOKIES)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.content, "html.parser")
-        for span in soup.find_all("span"):
-            if span.has_attr("id") and span["id"] == "sm_dl_wait":
-                return span["data-id"]
-
-    except Exception as e:
-        print(f"IMSLP query {query} failed:\n\t{e}")
-        return None
-
-
-def save_url(url: str, into: Path):
-    print(f"\tSaving {url} to {into}")
-    try:
-        response = requests.get(url)
-        with open(into, "wb+") as fp:
-            fp.write(response.content)
-        return True
-    except Exception as e:
-        print(f"Failed to fetch url: {url}\n\t{e}")
-        return False
-
-
-COM_RE = re.compile(r'^!!!COM:\s+(.*)$')
-OTL_RE = re.compile(r'^!!!OTL:\s+(.*)$')
-
-
-def extract_query(kern_file: Path) -> Optional[str]:
-    author, work = None, None
-    with open(kern_file, "r") as fp:
-        for line in fp:
-            if not line.startswith("!!!"):
-                return None
-            line = line.strip()
-            if (m := COM_RE.match(line)):
-                author = m.group(1)
-            elif (m := OTL_RE.match(line)):
-                work = m.group(1)
-            if author and work:
-                return f"imslp {author} {work}"
-    return None
-
-
 @click.command()
 @click.argument("target_directory", type=click.Path(dir_okay=True, exists=False),
                 required=False,
@@ -1079,11 +985,10 @@ ASAP_MERGES = [
 class Entry:
     kern_file: str
 
+    # The source dataset for this entry, "kern-score/*.zip" or "asap"
+    source: str
     imslp_url: str
     pdf_urls: List[str]
-
-    # The source dataset for this entry, "kern-score/*.zip" or "asap"
-    source: Optional[str] = ""
 
     @staticmethod
     def from_dict(data):
@@ -1174,18 +1079,20 @@ class KernSheet:
         for key, entry in self.entries.items():
             if entry.imslp_url:
                 continue
-            imslp_url = imslp.find_imslp(self.google_keywords(entry.kern_file))
-            if imslp_url is not None:
-                self.entries[key] = replace(entry, imslp_url=imslp_url)
-            self.save_catalog()
-            time.sleep(15)
+            print(f"{key}\t{self.google_keywords(entry.kern_file)}")
+        imslp_url = imslp.find_imslp(self.google_keywords(entry.kern_file))
+        if imslp_url is not None:
+            self.entries[key] = replace(entry, imslp_url=imslp_url)
+        self.save_catalog()
+        time.sleep(15)
 
     def staff(self, kern_path: str) -> List[Tuple[MatLike, Staffer.Page]]:
         path = self.datadir / kern_path
         pkl_path = path.with_suffix(".pkl")
         if path.with_suffix(".pkl").exists():
             with open(pkl_path, "rb") as fp:
-                data = cast(List[Tuple[MatLike, Staffer.Page]], pickle.load(fp))
+                data = cast(List[Tuple[MatLike, Staffer.Page]],
+                            pickle.load(fp))
         else:
             staffer = Staffer(path)
             data = staffer.staff()
@@ -1226,19 +1133,31 @@ def merge_asap(asap: Path, kern_sheet: Path):
 
 
 @click.command()
-def do():
-    kern_sheet = KernSheet(Path("/home/anselm/datasets/kern-sheet"))
+@click.argument("datadir",
+                type=click.Path(dir_okay=True, exists=True),
+                default="/home/anselm/datasets/kern-sheet/")
+def do(datadir: Path):
+    kern_sheet = KernSheet(Path(datadir))
     kern_sheet.fix_imslp()
 
 
 @click.command()
 @click.argument("datadir",
                 type=click.Path(file_okay=True, dir_okay=True),
-                default="/home/anselm/Downloads/kern-sheet/")
+                default="/home/anselm/datasets/kern-sheet/")
 @click.argument("kern_path", type=str, required=True)
 def staff(datadir: Path, kern_path: str):
     kern_sheet = KernSheet(datadir)
     kern_sheet.staff(kern_path)
+
+
+@click.command()
+@click.argument("datadir",
+                type=click.Path(dir_okay=True, exists=True),
+                default="/home/anselm/datasets/kern-sheet/")
+def missing(datadir: Path):
+    kern_sheet = KernSheet(Path(datadir))
+    kern_sheet.missing()
 
 
 @click.group
@@ -1250,7 +1169,7 @@ cli.add_command(make_kern_sheet)
 cli.add_command(merge_asap)
 cli.add_command(do)
 cli.add_command(staff)
-
+cli.add_command(missing)
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
     cli()
