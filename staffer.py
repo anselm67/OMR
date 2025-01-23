@@ -13,6 +13,12 @@ from scipy.signal import find_peaks
 
 
 class Staffer:
+    """Finds the layout of a score.
+
+        Given a pdf file, Staffer converts each page to a normalized
+        image, ready for training a model, and provides the corrdinates
+        of staves on each page of the score.
+    """
     WIDTH = 1200
 
     @dataclass
@@ -23,6 +29,9 @@ class Staffer:
 
     @dataclass
     class Page:
+        # Page number in the pdf (countint from 0)
+        pageno: int
+
         # For each double staff (right hand, left hand)
         # (rh_top: top of rh, lh_bot: bottom of lh)
         staves: List['Staffer.Staff']
@@ -131,7 +140,7 @@ class Staffer:
 
         return bar_peaks
 
-    def decode_page(self, orig_image: MatLike) -> Page:
+    def decode_page(self, orig_image: MatLike, pageno: int) -> Page:
         # Computes the vertical and horizontal projections.
         image = cv2.bitwise_not(orig_image)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
@@ -191,7 +200,7 @@ class Staffer:
                     len(staff_lines)} should be divisible by 10."
             )
 
-        page = Staffer.Page(staves=[])
+        page = Staffer.Page(pageno, staves=[])
         positions = [
             (staff_lines[ridx], staff_lines[lidx]) for ridx, lidx in self.line_indices(staff_lines)
         ]
@@ -208,5 +217,6 @@ class Staffer:
 
     def staff(self) -> List[Tuple[MatLike, Page]]:
         images = self.decode_images()
-        staves = [self.decode_page(i) for i in images]
+        staves = [self.decode_page(image, pageno)
+                  for pageno, image in enumerate(images)]
         return list(zip(images, staves))
