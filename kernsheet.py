@@ -1079,11 +1079,10 @@ class KernSheet:
         for key, entry in self.entries.items():
             if entry.imslp_url:
                 continue
-            print(f"{key}\t{self.google_keywords(entry.kern_file)}")
         imslp_url = imslp.find_imslp(self.google_keywords(entry.kern_file))
         if imslp_url is not None:
             self.entries[key] = replace(entry, imslp_url=imslp_url)
-        self.save_catalog()
+            self.save_catalog()
         time.sleep(15)
 
     def staff(self, kern_path: str) -> List[Tuple[MatLike, Staffer.Page]]:
