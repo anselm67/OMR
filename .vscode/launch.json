@@ -13,8 +13,8 @@
             "args": [
                 // "merge-asap"
                 // "cleanup-pdf"
-                // "do"
-                "staff", "/home/anselm/datasets/kern-sheet", "bach/inventions/inven13"
+                "do"
+                // "staff", "/home/anselm/datasets/kern-sheet", "bach/inventions/inven13"
             ]
         },
         {
