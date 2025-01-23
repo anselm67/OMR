@@ -1,8 +1,9 @@
 
 
+import pickle
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple, cast
 
 import cv2
 import matplotlib.pyplot as plt
@@ -29,6 +30,7 @@ class Staffer:
 
     @dataclass
     class Page:
+
         # Page number in the pdf (countint from 0)
         pageno: int
 
@@ -36,8 +38,12 @@ class Staffer:
         # (rh_top: top of rh, lh_bot: bottom of lh)
         staves: List['Staffer.Staff']
 
+        # Manually reviewed? Turns on when saved through the editor.
+        reviewed: bool = False
+
     do_plot: bool
     width: int
+    data: Optional[List[Tuple[MatLike, Page]]] = None
 
     def __init__(self, pdf_path: Path, width: int = WIDTH, do_plot: bool = False):
         self.pdf_path = pdf_path
@@ -215,8 +221,123 @@ class Staffer:
 
         return page
 
+    def load_if_exists(self) -> bool:
+        pkl_path = self.pdf_path.with_suffix(".pkl")
+        if pkl_path.exists():
+            with open(pkl_path, "rb") as fp:
+                self.data = cast(
+                    List[Tuple[MatLike, Staffer.Page]], pickle.load(fp))
+                return True
+        return False
+
+    def save(self):
+        pkl_path = self.pdf_path.with_suffix(".pkl")
+        with open(pkl_path, "wb+") as fp:
+            pickle.dump(self.data, fp)
+
     def staff(self) -> List[Tuple[MatLike, Page]]:
-        images = self.decode_images()
-        staves = [self.decode_page(image, pageno)
-                  for pageno, image in enumerate(images)]
-        return list(zip(images, staves))
+        if self.data is None:
+            if not self.load_if_exists():
+                images = self.decode_images()
+                staves = [self.decode_page(image, pageno)
+                          for pageno, image in enumerate(images)]
+                self.data = list(zip(images, staves))
+                self.save()
+        assert self.data is not None, f"{self.pdf_path}: no staff found."
+        return self.data
+
+    def draw_page(
+        self, image: MatLike, page: Page,
+        selected_staff: int = -1,
+        selected_bar: int = -1,
+        thickness: int = 2
+    ) -> MatLike:
+        BLUE = (255, 0, 0)
+        RED = (0, 0, 255)
+        style, selected_style = (BLUE, 2), (RED, 4)
+        rgb_image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        for staffno, staff in enumerate(page.staves):
+            # Draws the bars.
+            for barno, bar in enumerate(staff.bars):
+                color, thickness = selected_style if (staffno == selected_staff) and (
+                    barno == selected_bar) else style
+                cv2.line(
+                    rgb_image,
+                    (bar, staff.rh_top),
+                    (bar, staff.lh_bot),
+                    color, thickness
+                )
+            # Draws the top most and bottom most staff lines:
+            color, thickness = selected_style if (
+                staffno == selected_staff) else style
+            cv2.line(
+                rgb_image,
+                (staff.bars[0], staff.rh_top),
+                (staff.bars[-1], staff.rh_top),
+                color, thickness
+            )
+            # Left hand staff
+            cv2.line(
+                rgb_image,
+                (staff.bars[0], staff.lh_bot),
+                (staff.bars[-1], staff.lh_bot),
+                color,
+                thickness
+            )
+        return rgb_image
+
+    def edit(self):
+        position = 0
+        selected_staff, selected_bar = 0, 0
+        max_height = 800
+        data = self.staff()
+        while True:
+
+            image, page = data[position]
+            image = self.draw_page(image, page, selected_staff, selected_bar)
+            height, width = image.shape[:2]
+            if max_height > 0 and height > max_height:
+                new_width = int(max_height * width / height)
+                image = cv2.resize(image, (new_width, max_height))
+
+            cv2.imshow("edit", image)
+            key = cv2.waitKey()
+            if key == ord('q'):
+                return
+            elif key == ord('s'):
+                # Marks all pages as reviewed before saving.
+                assert self.data is not None, "Makes the type checker happy."
+                self.data = [(image, replace(page, reviewed=True))
+                             for image, page in self.data]
+                self.save()
+                print(f"{len(self.data)} pages reviewed and saved to {
+                      self.pdf_path.with_suffix('.pkl')}.")
+            elif key == ord('n') or key == ord(' '):
+                position = (position + 1) % len(data)
+            elif key == ord('p'):
+                position = max(0, position - 1)
+            elif key == ord('l'):    # Moves selected bar left.
+                page.staves[selected_staff].bars[selected_bar] += 5
+            elif key == ord('L'):    # Moves selected bar left.
+                page.staves[selected_staff].bars[selected_bar] += 1
+            elif key == ord('j'):    # Moves selected bar left.
+                page.staves[selected_staff].bars[selected_bar] -= 5
+            elif key == ord('J'):    # Moves selected bar left.
+                page.staves[selected_staff].bars[selected_bar] -= 1
+            elif key == 84:     # Key up
+                selected_staff = (selected_staff + 1) % len(page.staves)
+            elif key == 82:     # Key down
+                selected_staff = max(-0, selected_staff - 1)
+            elif key == 83:     # Key left
+                selected_bar = (
+                    selected_bar + 1) % len(page.staves[selected_staff].bars)
+            elif key == 81:     # Key right
+                selected_bar = max(0, selected_bar - 1)
+            else:
+                print(f"Key: {key}")
+
+
+if __name__ == '__main__':
+    staffer = Staffer(
+        Path("/home/anselm/datasets/kern-sheet/bach/inventions/inven13"))
+    staffer.edit()
