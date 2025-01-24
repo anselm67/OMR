@@ -42,13 +42,18 @@ class Staffer:
         reviewed: bool = False
 
     do_plot: bool
+    no_cache: bool
     width: int
     data: Optional[List[Tuple[MatLike, Page]]] = None
 
-    def __init__(self, pdf_path: Path, width: int = WIDTH, do_plot: bool = False):
+    def __init__(
+        self, pdf_path: Path,
+        width: int = WIDTH, do_plot: bool = False, no_cache: bool = False
+    ):
         self.pdf_path = pdf_path
         self.width = width
         self.do_plot = do_plot
+        self.no_cache = no_cache
 
     def denoise(self, image: MatLike, block_size: int = -1, C: int = 2) -> MatLike:
         if block_size > 0:
@@ -126,7 +131,7 @@ class Staffer:
         return out
 
     def find_bars(
-            self, image: MatLike, fill_rate: float = 0.85
+            self, image: MatLike, fill_rate: float = 0.8
     ) -> List[int]:
         x_proj = np.sum(image, 0)
         # A bar goes from top to bottom, so we can compute a min height for
@@ -201,10 +206,11 @@ class Staffer:
             plt.show()
 
         if len(staff_lines) % 10 != 0:
-            raise ValueError(
-                f"Number of lines {
-                    len(staff_lines)} should be divisible by 10."
-            )
+            # Trims off excess lines
+            length_10 = 10 * (len(staff_lines) // 10)
+            staff_lines = staff_lines[:length_10]
+            print(f"Trimming off {len(staff_lines) -
+                  length_10} bottom staff lines.")
 
         page = Staffer.Page(pageno, staves=[])
         positions = [
@@ -222,6 +228,8 @@ class Staffer:
         return page
 
     def load_if_exists(self) -> bool:
+        if self.no_cache:
+            return False
         pkl_path = self.pdf_path.with_suffix(".pkl")
         if pkl_path.exists():
             with open(pkl_path, "rb") as fp:
@@ -254,7 +262,10 @@ class Staffer:
     ) -> MatLike:
         BLUE = (255, 0, 0)
         RED = (0, 0, 255)
+        GREEN = (0, 255, 0)
         style, selected_style = (BLUE, 2), (RED, 4)
+        if page.reviewed:
+            style = (GREEN, 2)
         rgb_image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
         for staffno, staff in enumerate(page.staves):
             # Draws the bars.
@@ -307,8 +318,6 @@ class Staffer:
             elif key == ord('s'):
                 # Marks all pages as reviewed before saving.
                 assert self.data is not None, "Makes the type checker happy."
-                self.data = [(image, replace(page, reviewed=True))
-                             for image, page in self.data]
                 self.save()
                 print(f"{len(self.data)} pages reviewed and saved to {
                       self.pdf_path.with_suffix('.pkl')}.")
@@ -316,14 +325,16 @@ class Staffer:
                 position = (position + 1) % len(data)
             elif key == ord('p'):
                 position = max(0, position - 1)
-            elif key == ord('l'):    # Moves selected bar left.
+            elif key == ord('l'):    # Moves selected bar right.
                 page.staves[selected_staff].bars[selected_bar] += 5
-            elif key == ord('L'):    # Moves selected bar left.
+            elif key == ord('L'):    # Moves selected bar right slow.
                 page.staves[selected_staff].bars[selected_bar] += 1
             elif key == ord('j'):    # Moves selected bar left.
                 page.staves[selected_staff].bars[selected_bar] -= 5
-            elif key == ord('J'):    # Moves selected bar left.
+            elif key == ord('J'):    # Moves selected bar left slow.
                 page.staves[selected_staff].bars[selected_bar] -= 1
+            elif key == ord('m'):
+                page.reviewed = True
             elif key == 84:     # Key up
                 selected_staff = (selected_staff + 1) % len(page.staves)
             elif key == 82:     # Key down
@@ -333,11 +344,26 @@ class Staffer:
                     selected_bar + 1) % len(page.staves[selected_staff].bars)
             elif key == 81:     # Key right
                 selected_bar = max(0, selected_bar - 1)
+            elif key == ord('h') or key == ord('?'):
+                print("""
+'q'     Quit editor without saving.
+'n'     Next page of current score.
+'p'     Previous page of current score.
+'l'/'L' Move selected bar left, fast & slow.
+'j'/'J' Move selected bar right, fast & slow.
+'m'     Toggle on/off current page as reviewed.
+Up      Select staff above.
+Down    Select staff below.
+Right   Select staff below.
+Left    Select staff below.
+'h','?' This help.
+                      """)
             else:
                 print(f"Key: {key}")
 
 
 if __name__ == '__main__':
     staffer = Staffer(
-        Path("/home/anselm/datasets/kern-sheet/bach/inventions/inven13"))
+        Path("/home/anselm/datasets/kern-sheet/bach/inventions/inven01"),
+    )
     staffer.edit()
