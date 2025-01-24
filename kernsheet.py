@@ -167,8 +167,11 @@ class KernSheet:
         self, kern_path: Optional[str] = None, no_cache: bool = False, do_plot: bool = False
     ):
         if kern_path is None:
-            # Loops through all samples in need of verification.
+            # Loops through all samples in need of verification, skips non pdf.
             for key, entry in self.entries.items():
+                path = self.datadir / key
+                if not path.with_suffix(".pdf").exists():
+                    continue
                 staffer = Staffer(
                     self.datadir / key, do_plot=do_plot, no_cache=no_cache
                 )
