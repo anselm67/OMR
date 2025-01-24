@@ -189,7 +189,7 @@ class KernSheet:
 
 @click.command()
 @click.pass_context
-def do(ctx):
+def fix_imslp(ctx):
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.fix_imslp()
 
@@ -235,7 +235,7 @@ cli.add_command(make_kern_sheet)
 cli.add_command(merge_asap)
 
 
-cli.add_command(do)
+cli.add_command(fix_imslp)
 cli.add_command(edit)
 cli.add_command(missing)
 cli.add_command(update)
