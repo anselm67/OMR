@@ -3,9 +3,9 @@
 import logging
 import pickle
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Dict, List, Optional, Tuple, cast
 
 import cv2
 import matplotlib.pyplot as plt
@@ -34,6 +34,9 @@ class KernReader:
         for lineno in range(0, len(self.lines)):
             line = self.lines[lineno]
             if (m := self.BAR_RE.match(line)):
+                if line.startswith("=="):
+                    # Final bar, we're done.
+                    break
                 self.bars[int(m.group(1))] = lineno
         logging.info(f"{len(self.bars) - 1} bars in {self.path}")
 
