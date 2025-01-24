@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from typing import Iterable, Optional, TypeAlias, Union
@@ -42,3 +43,20 @@ def compare_sequences(yhat: torch.Tensor, y: torch.Tensor) -> float:
     wrong = torch.sum(y != yhat).item()
     total = torch.sum(y != GrandPiano.PAD[0]).item()
     return 1.0 - wrong / total
+
+
+def path_substract(shorter: Path, longer: Path) -> Path:
+    """Substract the shorter path from the longer to obtain a relative path.
+
+        This function asserts that there is a common prefix to noth paths.
+
+    Args:
+        shorter (Path): The short path to remove.
+        longer (Path): The longer path to remove shorter from.
+
+    Returns:
+        Path: _description_
+    """
+    prefix = os.path.commonprefix([shorter, longer])
+    assert prefix is not None, f"Can't substract {shorter} from {longer}"
+    return Path(os.path.relpath(longer, prefix))
