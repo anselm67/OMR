@@ -3,10 +3,10 @@ import logging
 import re
 from pathlib import Path
 from typing import List, Optional
+from urllib.parse import unquote
 
 import requests
 from bs4 import BeautifulSoup
-from googlesearch import search
 
 
 class IMSLP:
@@ -16,6 +16,8 @@ class IMSLP:
 
     def __init__(self, logger: Optional[logging.Logger] = None):
         self.logger = logger or logging.getLogger(__name__)
+
+    URL_LINK_RE = re.compile(r'^/url.q=([^\&]*)\&.*$')
 
     def find_imslp(self, query: str) -> Optional[str]:
         """Query Google for an IMSLP page.
@@ -29,9 +31,31 @@ class IMSLP:
         """
         try:
             self.logger.info(f"Googling '{query}' for imslp page.")
-            for result in search(query):
-                if str(result).startswith(self.IMSLP_BASE_URL):
-                    return str(result)
+            resp = requests.get(
+                url="https://www.google.com/search",
+                headers={
+                    "User-Agent": "Lynx/2.8.7rel.2 libwww-FM/2.14 SSL-MM/1.4.1 OpenSSL/1.0.0a",
+                    "Accept": "*/*"
+                },
+                params={
+                    "q": query,
+                    "client": "ubuntu-chr",
+                    "sourceid": "chrome&ie=UTF-",
+                    "ie": "UTF-8",
+                },
+                cookies={
+                    'CONSENT': 'PENDING+987',  # Bypasses the consent page
+                    'SOCS': 'CAESHAgBEhIaAB',
+                }
+            )
+            resp.raise_for_status()
+
+            soup = BeautifulSoup(resp.text, "html.parser")
+            for a in soup.find_all("a", {"class", "fuLhoc"}):
+                if (m := self.URL_LINK_RE.match(a["href"])):
+                    url = unquote(m.group(1))
+                    if url.startswith("https://imslp.org/"):
+                        return url
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
                 logging.exception(f"Too many server requests: {e}")
