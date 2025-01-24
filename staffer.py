@@ -361,26 +361,107 @@ class Staffer:
             )
         return rgb_image
 
-    def edit(self):
-        position = 0
-        selected_staff, selected_bar = 0, 0
-        max_height = 992
-        data = self.staff()
-        kern = KernReader(self.pdf_path)
+    class EditorState:
+        position: int = 0
+        selected_staff: int = 0
+        selected_bar: int = 0
+        bar_offset: int = 0
 
-        def bars_to(pageno: int) -> int:
+        data: List[Tuple[MatLike, 'Staffer.Page']]
+        image: MatLike
+        page: 'Staffer.Page'
+
+        def __init__(self, data: List[Tuple[MatLike, 'Staffer.Page']]):
+            self.data = data
+            self.position = 0
+            self.selected_staff = 0
+            self.selected_bar = 0
+
+        def get_bar_offset(self) -> int:
             barno = 0
-            for _, page in data[:pageno]:
+            for _, page in self.data[:self.position]:
                 for staff in page.staves:
                     barno += len(staff.bars) - 1
             return barno
 
+        def get(self) -> Tuple[MatLike, 'Staffer.Page']:
+            self.image, self.page = self.data[self.position]
+            return self.image, self.page
+
+        def next(self):
+            self.position = (self.position + 1) % len(self.data)
+            image, page = self.data[self.position]
+            self.selected_staff = 0
+            self.selected_bar = 0
+
+        def prev(self):
+            self.position = max(0, self.position - 1)
+            self.selected_staff = 0
+            self.selected_bar = 0
+
+        def select_prev_staff(self):
+            if self.selected_staff - 1 < 0:
+                if self.position - 1 < 0:
+                    print("Beginning of score.")
+                else:
+                    self.position -= 1
+                    self.selected_staff = len(
+                        self.data[self.position][1].staves) - 1
+            else:
+                self.selected_staff = self.selected_staff - 1
+            self.page = self.data[self.position][1]
+            if len(self.page.staves[self.selected_staff].bars) <= 0:
+                self.selected_bar = -1
+            else:
+                self.selected_bar = 0
+
+        def select_next_staff(self):
+            if self.selected_staff + 1 >= len(self.page.staves):
+                if self.position + 1 >= len(self.data):
+                    print("End of score.")
+                else:
+                    self.position += 1
+                    self.selected_staff = 0
+                    self.selected_bar = 0
+            else:
+                self.selected_staff = self.selected_staff + 1
+                self.selected_bar = 0
+            self.page = self.data[self.position][1]
+            if len(self.page.staves[self.selected_staff].bars) <= 0:
+                self.selected_bar = -1
+
+        def select_next_bar(self):
+            self.selected_bar = (
+                self.selected_bar + 1) % len(self.page.staves[self.selected_staff].bars)
+
+        def select_prev_bar(self):
+            self.selected_bar = max(0, self.selected_bar - 1)
+
+        def add_bar(self, offset: int = -1):
+            if offset < 0:
+                # Adds a bar after the selected one.
+                staff = self.page.staves[self.selected_staff]
+                if self.selected_bar < 0:
+                    offset = 10
+                else:
+                    offset = staff.bars[self.selected_bar] + 10
+                staff.bars.insert(self.selected_bar + 1, offset)
+                self.selected_bar = self.selected_bar + 1
+
+        def delete_selected_bar(self):
+            del self.page.staves[self.selected_staff].bars[self.selected_bar]
+            self.selected_bar = max(0, self.selected_bar - 1)
+
+    def edit(self, max_height: int = 992):
+        state = Staffer.EditorState(self.staff())
+        kern = KernReader(self.pdf_path)
+
         while True:
 
-            image, page = data[position]
-            bars_offset = bars_to(position)
+            image, page = state.get()
+            bars_offset = state.get_bar_offset()
             image = self.draw_page(
-                image, page, bars_offset, selected_staff, selected_bar
+                image, page, bars_offset, state.selected_staff, state.selected_bar
             )
             height, width = image.shape[:2]
             if max_height > 0 and height > max_height:
@@ -398,39 +479,37 @@ class Staffer:
                 print(f"{len(self.data)} pages reviewed and saved to {
                       self.pdf_path.with_suffix('.pkl')}.")
             elif key == ord('a'):
-                page.staves[selected_staff].bars.append(width // 2)
+                state.add_bar()
             elif key == ord('d'):
-                del page.staves[selected_staff].bars[selected_bar]
+                state.delete_selected_bar()
             elif key == ord('n') or key == ord(' '):
-                position = (position + 1) % len(data)
-                selected_staff, selected_bar = 0, 0
+                state.next()
             elif key == ord('p'):
-                position = max(0, position - 1)
-                selected_staff, selected_bar = 0, 0
+                state.prev()
             elif key == ord('i'):
-                page.staves[selected_staff].lh_bot -= 5
-                page.staves[selected_staff].rh_top -= 5
+                page.staves[state.selected_staff].lh_bot -= 5
+                page.staves[state.selected_staff].rh_top -= 5
             elif key == ord('I'):
-                page.staves[selected_staff].lh_bot -= 1
-                page.staves[selected_staff].rh_top -= 1
+                page.staves[state.selected_staff].lh_bot -= 1
+                page.staves[state.selected_staff].rh_top -= 1
             elif key == ord('m'):
-                page.staves[selected_staff].lh_bot += 5
-                page.staves[selected_staff].rh_top += 5
+                page.staves[state.selected_staff].lh_bot += 5
+                page.staves[state.selected_staff].rh_top += 5
             elif key == ord('M'):
-                page.staves[selected_staff].lh_bot += 1
-                page.staves[selected_staff].rh_top += 1
+                page.staves[state.selected_staff].lh_bot += 1
+                page.staves[state.selected_staff].rh_top += 1
             elif key == ord('x'):
-                page.staves[selected_staff].lh_bot += 1
+                page.staves[state.selected_staff].lh_bot += 1
             elif key == ord('j'):    # Moves selected bar left.
-                page.staves[selected_staff].bars[selected_bar] -= 5
+                page.staves[state.selected_staff].bars[state.selected_bar] -= 5
             elif key == ord('J'):    # Moves selected bar left slow.
-                page.staves[selected_staff].bars[selected_bar] -= 1
+                page.staves[state.selected_staff].bars[state.selected_bar] -= 1
             elif key == ord('k'):
                 # Show kerns matching this bar.
                 barno = bars_offset
-                for i in range(0, selected_staff):
+                for i in range(0, state.selected_staff):
                     barno += len(page.staves[i].bars) - 1
-                barno += selected_bar
+                barno += state.selected_bar
                 # Displays the kern tokens:
                 records = kern.get_text(barno + 1)
                 if records is None:
@@ -440,49 +519,36 @@ class Staffer:
                     for record in records:
                         print(record)
             elif key == ord('l'):    # Moves selected bar right.
-                page.staves[selected_staff].bars[selected_bar] += 5
+                page.staves[state.selected_staff].bars[state.selected_bar] += 5
             elif key == ord('L'):    # Moves selected bar right slow.
-                page.staves[selected_staff].bars[selected_bar] += 1
+                page.staves[state.selected_staff].bars[state.selected_bar] += 1
             elif key == ord('v'):
                 page.reviewed = not page.reviewed
-            elif key == 84:     # Key up
-                if selected_staff + 1 >= len(page.staves):
-                    if position + 1 >= len(data):
-                        print("End of score.")
-                    else:
-                        position += 1
-                        selected_staff, selected_bar = 0, 0
-                else:
-                    selected_staff, selected_bar = selected_staff + 1, 0
-            elif key == 82:     # Key down
-                if selected_staff - 1 < 0:
-                    if position - 1 < 0:
-                        print("Beginning of score.")
-                    else:
-                        position -= 1
-                        selected_staff, selected_bar = (
-                            len(data[position][1].staves) - 1,
-                            0
-                        )
-                else:
-                    selected_staff, selected_bar = selected_staff - 1, 0
+            elif key == 84:     # Key down
+                state.select_next_staff()
+            elif key == 82:     # Key up
+                state.select_prev_staff()
             elif key == 83:     # Key left
-                selected_bar = (
-                    selected_bar + 1) % len(page.staves[selected_staff].bars)
+                state.select_next_bar()
             elif key == 81:     # Key right
-                selected_bar = max(0, selected_bar - 1)
+                state.select_prev_bar()
             elif key == ord('h') or key == ord('?'):
                 print("""
 'q'     Quit editor without saving.
 'n'     Next page of current score.
 'p'     Previous page of current score.
-'l'/'L' Move selected bar left, fast & slow.
-'j'/'J' Move selected bar right, fast & slow.
-'m'     Toggle on/off current page as reviewed.
-Up      Select staff above.
-Down    Select staff below.
-Right   Select staff below.
-Left    Select staff below.
+'a'     Adds a bar to the selected staff.
+'d'     Deletes the selected bar.
+'i/I'   Moves selected staff up, fast & slow.
+'j/J'   Moves selected staff down, fast & slow.
+'x'     Extends the staffby lowering the right hand bottom.
+'l'/'L' Moves selected bar left, fast & slow.
+'j'/'J' Moves selected bar right, fast & slow.
+'m'     Toggles on/off current page as reviewed.
+Up      Selects staff above.
+Down    Selects staff below.
+Right   Selects staff below.
+Left    Selects staff below.
 'h','?' This help.
                       """)
             else:
