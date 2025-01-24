@@ -1,9 +1,11 @@
 
 
+import logging
 import pickle
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import List, Optional, Tuple, cast
+from typing import Dict, List, Optional, Tuple, Union, cast
 
 import cv2
 import matplotlib.pyplot as plt
@@ -11,6 +13,36 @@ import numpy as np
 from cv2.typing import MatLike
 from pdf2image import convert_from_path
 from scipy.signal import find_peaks
+
+
+class KernReader:
+
+    lines: List[str]
+    bars: Dict[int, int] = {}
+
+    def __init__(self, path: Path):
+        super().__init__()
+        self.path = path
+        self.load_tokens()
+
+    BAR_RE = re.compile(r'^=+\s*(\d+)?.*$')
+
+    def load_tokens(self):
+        with open(self.path.with_suffix(".tokens"), "r") as fp:
+            self.lines = [line.strip() for line in fp.readlines()]
+        # Constructs the bars index.
+        for lineno in range(0, len(self.lines)):
+            line = self.lines[lineno]
+            if (m := self.BAR_RE.match(line)):
+                self.bars[int(m.group(1))] = lineno
+        logging.info(f"{len(self.bars)} bars in {self.path}")
+
+    def get_text(self, barno: int, count: int = 10) -> Optional[List[str]]:
+        pos = self.bars.get(barno, -1)
+        if pos >= 0:
+            return self.lines[pos:pos+count]
+        else:
+            return None
 
 
 class Staffer:
@@ -308,8 +340,9 @@ class Staffer:
     def edit(self):
         position = 0
         selected_staff, selected_bar = 0, 0
-        max_height = 800
+        max_height = 1024
         data = self.staff()
+        kern = KernReader(self.pdf_path)
 
         def bars_to(pageno: int) -> int:
             barno = 0
@@ -353,11 +386,17 @@ class Staffer:
             elif key == ord('k'):
                 # Show kerns matching this bar.
                 barno = bars_offset
-                # Number of bars to the selected one.
                 for i in range(0, selected_staff):
                     barno += len(page.staves[i].bars) - 1
                 barno += selected_bar
-                print(f"Bar number: {barno + 1}")
+                # Displays the kern tokens:
+                records = kern.get_text(barno + 1)
+                if records is None:
+                    print(f"No records found for bar {barno + 1}")
+                else:
+                    print(f"Bar {barno + 1}:")
+                    for record in records:
+                        print(record)
             elif key == ord('l'):    # Moves selected bar right.
                 page.staves[selected_staff].bars[selected_bar] += 5
             elif key == ord('L'):    # Moves selected bar right slow.
@@ -365,11 +404,26 @@ class Staffer:
             elif key == ord('m'):
                 page.reviewed = True
             elif key == 84:     # Key up
-                selected_staff = (selected_staff + 1) % len(page.staves)
-                selected_bar = 0
+                if selected_staff + 1 >= len(page.staves):
+                    if position + 1 >= len(data):
+                        print("End of score.")
+                    else:
+                        position += 1
+                        selected_staff, selected_bar = 0, 0
+                else:
+                    selected_staff, selected_bar = selected_staff + 1, 0
             elif key == 82:     # Key down
-                selected_staff = max(-0, selected_staff - 1)
-                selected_bar = 0
+                if selected_staff - 1 < 0:
+                    if position - 1 < 0:
+                        print("Beginning of score.")
+                    else:
+                        position -= 1
+                        selected_staff, selected_bar = (
+                            len(data[position][1].staves) - 1,
+                            0
+                        )
+                else:
+                    selected_staff, selected_bar = selected_staff - 1, 0
             elif key == 83:     # Key left
                 selected_bar = (
                     selected_bar + 1) % len(page.staves[selected_staff].bars)
