@@ -37,9 +37,9 @@ class IgnoredSpine(Spine):
 
 class TokenFormatter:
     formatters: Dict[Type, Callable[[Spine, Token], str]]
-    barno: int = 0
 
     def __init__(self):
+        self.barno = 1
         self.formatters = {
             Bar: self.format_bar,
             Rest: self.format_rest,
@@ -70,9 +70,6 @@ class TokenFormatter:
         if bar.is_final:
             return "=="
         else:
-            if bar.barno < 0:
-                bar.barno = self.barno
-                self.barno += 1
             return f"={bar.barno}"
 
     def format_rest(self, spine: Spine, token: Token) -> str:
@@ -119,8 +116,10 @@ class TokenFormatter:
         return self.format_continue(spine, Continue())
 
     def format(self, spine: Spine, token: Token) -> str:
-        return self.formatters.get(
+        text = self.formatters.get(
             token.__class__, self.format_unknown)(spine, token)
+        self.last_token = token
+        return text
 
 
 class BaseHandler(Parser[Spine].Handler):
@@ -163,12 +162,15 @@ class BaseHandler(Parser[Spine].Handler):
 
 class NormHandler(BaseHandler):
 
-    formatter: TokenFormatter = TokenFormatter()
+    formatter: TokenFormatter
     output: Optional[TextIO]
+    barno: int
 
     def __init__(self, output_path: Optional[Path]):
         super(NormHandler, self).__init__()
         self.output = output_path and open(output_path, 'w+')
+        self.formatter = TokenFormatter()
+        self.barno = 1
 
     last_metric: Optional[Meter] = None
 
@@ -189,11 +191,22 @@ class NormHandler(BaseHandler):
             return True
         return False
 
+    def fix_bar(self, tokens: List[Tuple[Spine, Token]]):
+        if all([isinstance(token, Bar) for _, token in tokens]):
+            bars = [cast(Bar, token) for _, token in tokens]
+            if all([bar.barno < 0 for bar in bars]):
+                for bar in bars:
+                    bar.barno = self.barno
+                self.barno += 1
+            else:
+                self.barno = bars[0].barno + 1
+
     def append(self, tokens: List[Tuple[Spine, Token]]):
         tokens = [(spine, token) for spine, token in tokens
                   if not isinstance(spine, IgnoredSpine)]
         if self.should_skip(tokens):
             return
+        self.fix_bar(tokens)
         if self.output:
             self.output.write('\t'.join([
                 self.formatter.format(spine, token)for spine, token in tokens
