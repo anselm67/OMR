@@ -255,7 +255,7 @@ class Staffer:
         return self.data
 
     def draw_page(
-        self, image: MatLike, page: Page,
+        self, image: MatLike, page: Page, bar_offset: int,
         selected_staff: int = -1,
         selected_bar: int = -1,
         thickness: int = 2
@@ -278,6 +278,14 @@ class Staffer:
                     (bar, staff.lh_bot),
                     color, thickness
                 )
+                # Renders the bar number only if not last of staff.
+                if barno != len(staff.bars) - 1:
+                    cv2.putText(
+                        rgb_image, str(bar_offset + barno + 1),
+                        (bar+3, staff.rh_top - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, fontScale=1,
+                        color=color, thickness=thickness)
+            bar_offset += len(staff.bars) - 1
             # Draws the top most and bottom most staff lines:
             color, thickness = selected_style if (
                 staffno == selected_staff) else style
@@ -302,10 +310,21 @@ class Staffer:
         selected_staff, selected_bar = 0, 0
         max_height = 800
         data = self.staff()
+
+        def bars_to(pageno: int) -> int:
+            barno = 0
+            for _, page in data[:pageno]:
+                for staff in page.staves:
+                    barno += len(staff.bars) - 1
+            return barno
+
         while True:
 
             image, page = data[position]
-            image = self.draw_page(image, page, selected_staff, selected_bar)
+            bars_offset = bars_to(position)
+            image = self.draw_page(
+                image, page, bars_offset, selected_staff, selected_bar
+            )
             height, width = image.shape[:2]
             if max_height > 0 and height > max_height:
                 new_width = int(max_height * width / height)
@@ -323,22 +342,34 @@ class Staffer:
                       self.pdf_path.with_suffix('.pkl')}.")
             elif key == ord('n') or key == ord(' '):
                 position = (position + 1) % len(data)
+                selected_staff, selected_bar = 0, 0
             elif key == ord('p'):
                 position = max(0, position - 1)
-            elif key == ord('l'):    # Moves selected bar right.
-                page.staves[selected_staff].bars[selected_bar] += 5
-            elif key == ord('L'):    # Moves selected bar right slow.
-                page.staves[selected_staff].bars[selected_bar] += 1
+                selected_staff, selected_bar = 0, 0
             elif key == ord('j'):    # Moves selected bar left.
                 page.staves[selected_staff].bars[selected_bar] -= 5
             elif key == ord('J'):    # Moves selected bar left slow.
                 page.staves[selected_staff].bars[selected_bar] -= 1
+            elif key == ord('k'):
+                # Show kerns matching this bar.
+                barno = bars_offset
+                # Number of bars to the selected one.
+                for i in range(0, selected_staff):
+                    barno += len(page.staves[i].bars) - 1
+                barno += selected_bar
+                print(f"Bar number: {barno + 1}")
+            elif key == ord('l'):    # Moves selected bar right.
+                page.staves[selected_staff].bars[selected_bar] += 5
+            elif key == ord('L'):    # Moves selected bar right slow.
+                page.staves[selected_staff].bars[selected_bar] += 1
             elif key == ord('m'):
                 page.reviewed = True
             elif key == 84:     # Key up
                 selected_staff = (selected_staff + 1) % len(page.staves)
+                selected_bar = 0
             elif key == 82:     # Key down
                 selected_staff = max(-0, selected_staff - 1)
+                selected_bar = 0
             elif key == 83:     # Key left
                 selected_bar = (
                     selected_bar + 1) % len(page.staves[selected_staff].bars)
