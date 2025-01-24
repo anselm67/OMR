@@ -376,6 +376,7 @@ class Staffer:
             self.position = 0
             self.selected_staff = 0
             self.selected_bar = 0
+            self.image, self.page = self.data[self.position]
 
         def get_bar_offset(self) -> int:
             barno = 0
@@ -385,57 +386,73 @@ class Staffer:
             return barno
 
         def get(self) -> Tuple[MatLike, 'Staffer.Page']:
-            self.image, self.page = self.data[self.position]
             return self.image, self.page
 
         def next(self):
-            self.position = (self.position + 1) % len(self.data)
-            image, page = self.data[self.position]
+            if self.position + 1 >= len(self.data):
+                print("End of score.")
+                return
+            self.position += 1
+            self.image, self.page = self.data[self.position]
             self.selected_staff = 0
-            self.selected_bar = 0
-
-        def prev(self):
-            self.position = max(0, self.position - 1)
-            self.selected_staff = 0
-            self.selected_bar = 0
-
-        def select_prev_staff(self):
-            if self.selected_staff - 1 < 0:
-                if self.position - 1 < 0:
-                    print("Beginning of score.")
-                else:
-                    self.position -= 1
-                    self.selected_staff = len(
-                        self.data[self.position][1].staves) - 1
-            else:
-                self.selected_staff = self.selected_staff - 1
-            self.page = self.data[self.position][1]
-            if len(self.page.staves[self.selected_staff].bars) <= 0:
+            if len(self.page.staves) == 0:
+                self.selected_staff = -1
+            elif len(self.page.staves[0].bars) == 0:
                 self.selected_bar = -1
             else:
                 self.selected_bar = 0
+
+        def prev(self, select_last: bool = False):
+            if self.position - 1 < 0:
+                print("Beginning of score.")
+                return
+            self.position -= 1
+            self.image, self.page = self.data[self.position]
+            staff_count = len(self.page.staves)
+            if staff_count == 0:
+                self.selected_staff = -1
+            elif select_last:
+                self.selected_staff = staff_count - 1
+            else:
+                self.selected_staff = 0
+            if len(self.page.staves[self.selected_staff].bars) == 0:
+                self.selected_bar = -1
+            else:
+                self.selected_bar = 0
+
+        def select_prev_staff(self, select_last: bool = False):
+            if self.selected_staff - 1 < 0:
+                self.prev(select_last=True)
+            else:
+                self.selected_staff = self.selected_staff - 1
+                self.selected_bar = 0
+                bar_count = len(self.page.staves[self.selected_staff].bars)
+                if bar_count <= 0:
+                    self.selected_bar = -1
+                elif select_last:
+                    self.selected_bar = bar_count - 1
 
         def select_next_staff(self):
             if self.selected_staff + 1 >= len(self.page.staves):
-                if self.position + 1 >= len(self.data):
-                    print("End of score.")
-                else:
-                    self.position += 1
-                    self.selected_staff = 0
-                    self.selected_bar = 0
+                self.next()
             else:
                 self.selected_staff = self.selected_staff + 1
                 self.selected_bar = 0
-            self.page = self.data[self.position][1]
-            if len(self.page.staves[self.selected_staff].bars) <= 0:
-                self.selected_bar = -1
+                if len(self.page.staves[self.selected_staff].bars) <= 0:
+                    self.selected_bar = -1
 
         def select_next_bar(self):
-            self.selected_bar = (
-                self.selected_bar + 1) % len(self.page.staves[self.selected_staff].bars)
+            bar_count = len(self.page.staves[self.selected_staff].bars)
+            if self.selected_bar + 1 >= bar_count:
+                self.select_next_staff()
+            else:
+                self.selected_bar += 1
 
         def select_prev_bar(self):
-            self.selected_bar = max(0, self.selected_bar - 1)
+            if self.selected_bar - 1 < 0:
+                self.select_prev_staff(select_last=True)
+            else:
+                self.selected_bar = 0
 
         def add_bar(self, offset: int = -1):
             if offset < 0:
@@ -498,8 +515,10 @@ class Staffer:
             elif key == ord('M'):
                 page.staves[state.selected_staff].lh_bot += 1
                 page.staves[state.selected_staff].rh_top += 1
-            elif key == ord('x'):
+            elif key == ord('e'):
                 page.staves[state.selected_staff].lh_bot += 1
+            elif key == ord('r'):
+                page.staves[state.selected_staff].lh_bot -= 1
             elif key == ord('j'):    # Moves selected bar left.
                 page.staves[state.selected_staff].bars[state.selected_bar] -= 5
             elif key == ord('J'):    # Moves selected bar left slow.
@@ -541,7 +560,8 @@ class Staffer:
 'd'     Deletes the selected bar.
 'i/I'   Moves selected staff up, fast & slow.
 'j/J'   Moves selected staff down, fast & slow.
-'x'     Extends the staffby lowering the right hand bottom.
+'e'     Extends the staff by lowering the right hand bottom.
+'r'     Shrinks the staff by raising the right hand bottom.
 'l'/'L' Moves selected bar left, fast & slow.
 'j'/'J' Moves selected bar right, fast & slow.
 'm'     Toggles on/off current page as reviewed.
