@@ -1084,6 +1084,8 @@ class KernSheet:
             if imslp_url is not None:
                 self.entries[key] = replace(entry, imslp_url=imslp_url)
                 self.save_catalog()
+            else:
+                print("No Google match found for query.")
             time.sleep(30)
 
     def staff(self, kern_path: str) -> List[Tuple[MatLike, Staffer.Page]]:
