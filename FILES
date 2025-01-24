@@ -33,7 +33,7 @@ Building the KernSheet dataset ~/Downloads/KernSheet/:
 these files are computed with various tools:
 - *.tokens: The token files to feed the model with, from the .krn with:
     # ./main.py tokenize ~/Downloads/KernSheet
-- *.numpy: Cached list of images corresponding to each pages of the pdf
+- *.pkl: Cached list of images corresponding to each pages of the pdf
     file, un-transformed, along with the corresponding Page structure.
     # ./staffer staff ~/Downloads/KernSheet
 

@@ -13,9 +13,9 @@
             "args": [
                 // "merge-asap"
                 // "cleanup-pdf"
-                "do"
+                // "do"
                 // "update",
-                // "staff", "/home/anselm/datasets/kern-sheet", "bach/inventions/inven13"
+                "edit", "bach/inventions/inven01"
             ]
         },
         {

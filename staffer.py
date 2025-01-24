@@ -35,7 +35,7 @@ class KernReader:
             line = self.lines[lineno]
             if (m := self.BAR_RE.match(line)):
                 self.bars[int(m.group(1))] = lineno
-        logging.info(f"{len(self.bars)} bars in {self.path}")
+        logging.info(f"{len(self.bars) - 1} bars in {self.path}")
 
     def get_text(self, barno: int, count: int = 10) -> Optional[List[str]]:
         pos = self.bars.get(barno, -1)
@@ -448,10 +448,8 @@ Left    Select staff below.
             else:
                 print(f"Key: {key}")
 
-
-if __name__ == '__main__':
-    staffer = Staffer(
-        Path("/home/anselm/datasets/kern-sheet/bach/inventions/inven01"),
-        no_cache=True
-    )
-    staffer.edit()
+    def is_reviewed(self) -> bool:
+        for _, page in self.staff():
+            if not page.reviewed:
+                return False
+        return True

@@ -22,7 +22,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from functools import reduce
 from pathlib import Path
-from typing import Dict, List, Tuple, cast
+from typing import Dict, List, Optional, Tuple, cast
 from urllib.parse import quote
 
 import click
@@ -163,62 +163,71 @@ class KernSheet:
             self.save_catalog()
             time.sleep(20 + random.randint(10, 20))
 
-    def staff(self, kern_path: str) -> List[Tuple[MatLike, Staffer.Page]]:
-        path = self.datadir / kern_path
-        pkl_path = path.with_suffix(".pkl")
-        if path.with_suffix(".pkl").exists():
-            with open(pkl_path, "rb") as fp:
-                data = cast(List[Tuple[MatLike, Staffer.Page]],
-                            pickle.load(fp))
+    def edit(
+        self, kern_path: Optional[str] = None, no_cache: bool = False, do_plot: bool = False
+    ):
+        if kern_path is None:
+            # Loops through all samples in need of verification.
+            for key, entry in self.entries.items():
+                staffer = Staffer(
+                    self.datadir / key, do_plot=do_plot, no_cache=no_cache
+                )
+                if not staffer.is_reviewed():
+                    print(
+                        f"Editing {key}\n"
+                        f"\timslp_url: {entry.imslp_url}"
+                        f"\tpdf_urls: {entry.pdf_urls}"
+                    )
+                    staffer.edit()
         else:
-            staffer = Staffer(path)
-            data = staffer.staff()
-            with open(pkl_path, "wb+") as fp:
-                pickle.dump(data, fp)
-        return data
+            # Edits the given entry.
+            staffer = Staffer(
+                self.datadir / kern_path, do_plot=do_plot, no_cache=no_cache
+            )
+            staffer.edit()
 
 
 @click.command()
-@click.argument("datadir",
-                type=click.Path(dir_okay=True, exists=True),
-                default="/home/anselm/datasets/kern-sheet/")
-def do(datadir: Path):
-    kern_sheet = KernSheet(Path(datadir))
+@click.pass_context
+def do(ctx):
+    kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.fix_imslp()
 
 
 @click.command()
-@click.argument("datadir",
-                type=click.Path(file_okay=True, dir_okay=True),
-                default="/home/anselm/datasets/kern-sheet/")
-@click.argument("kern_path", type=str, required=True)
-def staff(datadir: Path, kern_path: str):
-    kern_sheet = KernSheet(datadir)
-    kern_sheet.staff(kern_path)
+@click.argument("kern_path", type=str, required=False, default=None)
+@click.option("--no-cache", "no_cache", is_flag=True, default=False,
+              help="Don't use cached versions of the pdf & staff.")
+@click.option("--do-plot", "do_plot", is_flag=True, default=False,
+              help="Don't use cached versions of the pdf & staff.")
+@click.pass_context
+def edit(ctx, kern_path: Optional[str], no_cache: bool, do_plot: bool):
+    kern_sheet = cast(KernSheet, ctx.obj)
+    kern_sheet.edit(kern_path, no_cache=no_cache, do_plot=do_plot)
 
 
 @click.command()
-@click.argument("datadir",
-                type=click.Path(dir_okay=True, exists=True),
-                default="/home/anselm/datasets/kern-sheet/")
-def missing(datadir: Path):
-    kern_sheet = KernSheet(Path(datadir))
+@click.pass_context
+def missing(ctx):
+    kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.missing()
 
 
 @click.command()
-@click.argument("datadir",
-                type=click.Path(dir_okay=True, exists=True),
-                default="/home/anselm/datasets/kern-sheet/")
-def update(datadir: Path):
+@click.pass_context
+def update(ctx):
     # By load & save we ensure all optional fields of Enrty are now available.
-    kern_sheet = KernSheet(Path(datadir))
+    kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.save_catalog()
 
 
 @click.group
-def cli():
-    pass
+@click.option("--dataset", "-d", required=False,
+              type=click.Path(file_okay=False, dir_okay=True, exists=True),
+              default="/home/anselm/datasets/kern-sheet/")
+@click.pass_context
+def cli(ctx, dataset: Path):
+    ctx.obj = KernSheet(dataset)
 
 
 # From make_kernsheet.py
@@ -227,7 +236,7 @@ cli.add_command(merge_asap)
 
 
 cli.add_command(do)
-cli.add_command(staff)
+cli.add_command(edit)
 cli.add_command(missing)
 cli.add_command(update)
 
