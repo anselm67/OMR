@@ -133,26 +133,28 @@ class Staffer:
               self.average_angle(image):2.4f} degrees.")
         return image
 
+    def transform(self, orig_image: MatLike) -> MatLike:
+        image = cv2.cvtColor(np.array(orig_image), cv2.COLOR_RGB2GRAY)
+        image = self.denoise(image)
+        image = self.deskew(image)
+        # Some of the operations above de-binarize the images.
+        image = self.denoise(image)
+        return image
+
     def decode_images(self) -> List[MatLike]:
         # Runs the pdf conversion with all transformations.
         pdf = convert_from_path(self.pdf_path.with_suffix(".pdf"))
+        # Rescale to requested width and pad to requested height.
 
-        def transform(orig_image: MatLike) -> MatLike:
-            image = cv2.cvtColor(np.array(orig_image), cv2.COLOR_RGB2GRAY)
-            image = self.denoise(image)
-            image = self.deskew(image)
-            # Rescale to requested width and pad to requested height.
-            h, w = image.shape
+        def resize(image) -> MatLike:
+            h, w = image.shape[:-1]
             scale = self.width / w
             image = cv2.resize(
                 image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
             )
-            # Some of the operations above de-binarize the images.
-            image = self.denoise(image)
             return image
 
-        # Caches the results.
-        return [transform(np.array(image)) for _, image in enumerate(pdf)]
+        return [resize(np.array(image)) for image in pdf]
 
     def line_indices(self, lines: List[int]) -> List[Tuple[int, int]]:
         idx = 0
@@ -279,7 +281,7 @@ class Staffer:
         if self.data is None:
             if not self.load_if_exists():
                 images = self.decode_images()
-                staves = [self.decode_page(image, pageno)
+                staves = [self.decode_page(self.transform(image), pageno)
                           for pageno, image in enumerate(images)]
                 self.data = list(zip(images, staves))
                 self.save()
@@ -298,7 +300,7 @@ class Staffer:
         style, selected_style = (BLUE, 2), (RED, 4)
         if page.reviewed:
             style = (GREEN, 2)
-        rgb_image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        rgb_image = image.copy()
         for staffno, staff in enumerate(page.staves):
             # Draws the bars.
             for barno, bar in enumerate(staff.bars):
@@ -450,5 +452,6 @@ Left    Select staff below.
 if __name__ == '__main__':
     staffer = Staffer(
         Path("/home/anselm/datasets/kern-sheet/bach/inventions/inven01"),
+        no_cache=True
     )
     staffer.edit()

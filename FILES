@@ -2,7 +2,7 @@ midinorm.py
     Takes a midi stream, normalizes all tracks into one timeline that 
     it cuts it into bars, for alignment with the sheet music.
 staffer.py
-    Figures out the staves and bars position from a .pdf file Hopefullyu
+    Figures out the staves and bars position from a .pdf file. Hopefully
     I can align kern files against image bars and use that for training 
     rather than synthetic data.
 midi/ 
@@ -34,7 +34,7 @@ these files are computed with various tools:
 - *.tokens: The token files to feed the model with, from the .krn with:
     # ./main.py tokenize ~/Downloads/KernSheet
 - *.numpy: Cached list of images corresponding to each pages of the pdf
-    file, transformed and ready for consumption by the model.
+    file, un-transformed, along with the corresponding Page structure.
     # ./staffer staff ~/Downloads/KernSheet
 
     
