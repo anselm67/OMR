@@ -149,9 +149,12 @@ class Meter(Token):
 @dataclass
 class Bar(Token):
     text: str
+    barno: int
+    is_final: bool
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, barno: int, is_final: bool = False):
         self.text = text
+        self.barno = barno
         self.is_final = (text == "==")
 
 

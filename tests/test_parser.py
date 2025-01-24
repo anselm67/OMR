@@ -3,7 +3,7 @@ from typing import List, Optional, Tuple
 from unittest.mock import Mock, call
 
 from kern.parser import Parser
-from kern.typing import Duration, Note, Pitch, Rest, Token
+from kern.typing import Bar, Duration, Note, Pitch, Rest, Token
 
 
 class EmptySpine:
@@ -229,6 +229,10 @@ class TestHumdrumParser(unittest.TestCase):
         self.parse_one_token("8%-3ryy\n", Rest(
             duration=Duration(3, 0),
         ))
+
+    def test_bar_number(self):
+        self.parse_one_token("= 7 \n", Bar("= 7", 7))
+        self.parse_one_token("==\n", Bar("==", barno=-1, is_final=True))
 
 
 if __name__ == '__main__':

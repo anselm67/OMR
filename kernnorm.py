@@ -37,6 +37,7 @@ class IgnoredSpine(Spine):
 
 class TokenFormatter:
     formatters: Dict[Type, Callable[[Spine, Token], str]]
+    barno: int = 0
 
     def __init__(self):
         self.formatters = {
@@ -66,7 +67,13 @@ class TokenFormatter:
 
     def format_bar(self, spine: Spine, token: Token) -> str:
         bar = cast(Bar, token)
-        return "==" if bar.is_final else "="
+        if bar.is_final:
+            return "=="
+        else:
+            if bar.barno < 0:
+                bar.barno = self.barno
+                self.barno += 1
+            return f"={bar.barno}"
 
     def format_rest(self, spine: Spine, token: Token) -> str:
         rest = cast(Rest, token)

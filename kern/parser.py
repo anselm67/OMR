@@ -131,11 +131,12 @@ class KernSpineHolder[T](SpineHolder):
 
     REST_RE = re.compile(
         r'^\.*Z*(\d+%)?-?([qN\&<>\{\[\(\)\]\}\\/y]*)([\d]+)?(\.*)r(.*)$')
-    BAR_RE = re.compile(r'^=+.*$')
+    BAR_RE = re.compile(r'^=+\s*(\d+)?.*$')
 
     def parse_event(self, text: str) -> Token:
-        if self.BAR_RE.match(text):
-            return Bar(text)
+        if (m := self.BAR_RE.match(text)):
+            barno = m.group(1)
+            return Bar(text, int(barno) if barno else -1)
         elif text == '.':
             return Continue()
         elif text.startswith("!"):
@@ -413,11 +414,6 @@ class Parser(Generic[T]):
                     self.parse_token(holder, text, tokens_iterator)
                 ))
             self.handler.append(tokens)
-
-            # self.handler.append([
-            #     (holder.spine, self.parse_token(holder, text, tokens_iterator))
-            #     for holder, text in tokens_iterator
-            # ])
 
     def header(self):
         kerns = self.next(throw_on_end=True).split()    # type: ignore
