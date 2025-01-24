@@ -12,7 +12,7 @@ from numpy.typing import NDArray
 from click_context import ClickContext
 from client import infos, predict, random_check
 from grandpiano import histo, load, make_vocab, refresh_list, stats
-from kernnorm import kern_stats, tokenize
+from tokenizer import kern_stats, tokenize
 from train import train
 
 

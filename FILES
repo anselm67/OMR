@@ -9,7 +9,7 @@ midi/
     A midi file parser and generator.
 kern/
     A kern file parser.
-kernnorm.py
+tokenizer.py
     Normalizes a kern file into a .tokens file suitable for training 
     the network. This all infos that are necessary to display a score, 
     and keeeps only the infos required for playback of the score.
