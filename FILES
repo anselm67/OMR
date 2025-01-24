@@ -52,3 +52,4 @@ Converting a music xml file to .krn then to.pdf:
     bwv_846.krn -o output.svg
 # rsvg-convert output.svg -f pdf -o output.pdf
 
+https://vmirror.imslp.org/files/imglnks/usimg/3/3c/IMSLP01013-Pre_fug9.pdf

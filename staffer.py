@@ -5,7 +5,7 @@ import pickle
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 import cv2
 import matplotlib.pyplot as plt
@@ -188,6 +188,23 @@ class Staffer:
 
         return bar_peaks
 
+    def filter_staff_peaks(self, staff_peaks, peak_heights) -> List[int]:
+        # Checks the gaps for a first (title) or last (legend) outlier.
+        gaps = staff_peaks[1:] - staff_peaks[:-1]
+        average_gap = sum(gaps) / len(gaps)
+        if gaps[0] > 2 * average_gap:
+            return staff_peaks[1:]
+        elif gaps[-1] > 2 * average_gap:
+            return staff_peaks[:-1]
+        # Drops the looser, i.e. smallest peak.
+        sorted_peaks = sorted(
+            zip(staff_peaks, peak_heights),
+            key=lambda x: x[1],
+            reverse=True
+        )
+        staff_peaks = [staff_peak for staff_peak, _ in sorted_peaks]
+        return staff_peaks[:-1]
+
     def decode_page(self, orig_image: MatLike, pageno: int) -> Page:
         # Computes the vertical and horizontal projections.
         image = cv2.bitwise_not(orig_image)
@@ -204,8 +221,13 @@ class Staffer:
         y_proj[offset:offset+len(y_avg)] = y_avg
         # The width=20 is the max allowed for chopin/mazurka/mazurka30-3
         # Height of 45_000 is for mozart/piano/sonata/sonata01-1
-        staff_peaks, _ = find_peaks(
+        staff_peaks, properties = find_peaks(
             y_proj, width=20, distance=50, height=40_000)
+
+        if len(staff_peaks) % 2 != 0:
+            staff_peaks = self.filter_staff_peaks(
+                staff_peaks, properties['peak_heights'].tolist()
+            )
 
         # Around each staff peak, find the peaks corresponding to each staff line.
         staff_lines = []
@@ -366,6 +388,7 @@ class Staffer:
         selected_staff: int = 0
         selected_bar: int = 0
         bar_offset: int = 0
+        scale_ratio: float = 1.0
 
         data: List[Tuple[MatLike, 'Staffer.Page']]
         image: MatLike
@@ -374,9 +397,14 @@ class Staffer:
         def __init__(self, data: List[Tuple[MatLike, 'Staffer.Page']]):
             self.data = data
             self.position = 0
+            self.image, self.page = self.data[self.position]
             self.selected_staff = 0
             self.selected_bar = 0
-            self.image, self.page = self.data[self.position]
+            if len(self.page.staves) <= 0:
+                self.selected_staff = -1
+                self.selected_bar = -1
+            elif len(self.page.staves[0].bars) <= 0:
+                self.selected_bar = -1
 
         def get_bar_offset(self) -> int:
             barno = 0
@@ -415,7 +443,7 @@ class Staffer:
                 self.selected_staff = staff_count - 1
             else:
                 self.selected_staff = 0
-            if len(self.page.staves[self.selected_staff].bars) == 0:
+            if self.selected_staff < 0 or len(self.page.staves[self.selected_staff].bars) == 0:
                 self.selected_bar = -1
             else:
                 self.selected_bar = 0
@@ -454,38 +482,94 @@ class Staffer:
             else:
                 self.selected_bar = 0
 
+        def add_staff(self, offset: int = -1):
+            if self.selected_staff < 0:
+                self.page.staves.append(Staffer.Staff(
+                    rh_top=100,
+                    lh_bot=200,
+                    bars=list()
+                ))
+            else:
+                self.page.staves.insert(
+                    self.selected_staff + 1,
+                    Staffer.Staff(
+                        rh_top=self.page.staves[self.selected_staff].lh_bot + 10,
+                        lh_bot=self.page.staves[self.selected_staff].lh_bot + 110,
+                        bars=list()
+                    )
+                )
+
         def add_bar(self, offset: int = -1):
+            staff = self.page.staves[self.selected_staff]
             if offset < 0:
                 # Adds a bar after the selected one.
-                staff = self.page.staves[self.selected_staff]
                 if self.selected_bar < 0:
                     offset = 10
+                    staff.bars.append(offset)
                 else:
                     offset = staff.bars[self.selected_bar] + 10
-                staff.bars.insert(self.selected_bar + 1, offset)
-                self.selected_bar = self.selected_bar + 1
+                    staff.bars.insert(self.selected_bar + 1, offset)
+            else:
+                staff.bars.append(offset)
+            staff.bars = sorted(staff.bars)
+            self.selected_bar = staff.bars.index(offset)
 
         def delete_selected_bar(self):
             del self.page.staves[self.selected_staff].bars[self.selected_bar]
             self.selected_bar = max(0, self.selected_bar - 1)
 
+        def delete_selected_staff(self):
+            del self.page.staves[self.selected_staff]
+            if len(self.page.staves) == 0:
+                self.selected_staff = -1
+                self.selected_bar = -1
+            else:
+                self.selected_staff = max(0, self.selected_staff - 1)
+                self.selected_bar = 0
+
+    def mouse_callback(self, state: EditorState,  event: int, x: int, y: int) -> bool:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            # Selects the staff at y, adds a bar at x, and select new bar.
+            for pos, staff in enumerate(state.page.staves):
+                if staff.rh_top <= y <= staff.lh_bot:
+                    state.selected_staff = pos
+                    state.add_bar(x)
+                    return True
+        return False
+
+    STAFFER_WINDOW = "Staffer"
+
     def edit(self, max_height: int = 992):
         state = Staffer.EditorState(self.staff())
         kern = KernReader(self.pdf_path)
 
-        while True:
+        cv2.namedWindow(self.STAFFER_WINDOW)
 
-            image, page = state.get()
-            bars_offset = state.get_bar_offset()
+        def update_ui():
             image = self.draw_page(
-                image, page, bars_offset, state.selected_staff, state.selected_bar
+                state.image, state.page, bars_offset, state.selected_staff, state.selected_bar
             )
             height, width = image.shape[:2]
             if max_height > 0 and height > max_height:
+                state.scale_ratio = height / max_height
                 new_width = int(max_height * width / height)
                 image = cv2.resize(image, (new_width, max_height))
+            else:
+                state.scale_ratio = 1.0
+            cv2.imshow(self.STAFFER_WINDOW, image)
 
-            cv2.imshow("edit", image)
+        def mouse_callback(event: int, x: int, y: int, _1: int, _2: Any):
+            x, y = int(x * state.scale_ratio), int(y * state.scale_ratio)
+            if self.mouse_callback(state, event, x, y):
+                update_ui()
+
+        cv2.setMouseCallback(self.STAFFER_WINDOW, mouse_callback)
+
+        while True:
+
+            bars_offset = state.get_bar_offset()
+            update_ui()
+
             key = cv2.waitKey()
             if key == ord('q'):
                 return
@@ -497,6 +581,10 @@ class Staffer:
                       self.pdf_path.with_suffix('.pkl')}.")
             elif key == ord('a'):
                 state.add_bar()
+            elif key == ord('w'):
+                state.add_staff()
+            elif key == ord('x'):
+                state.delete_selected_staff()
             elif key == ord('d'):
                 state.delete_selected_bar()
             elif key == ord('n') or key == ord(' '):
@@ -504,30 +592,22 @@ class Staffer:
             elif key == ord('p'):
                 state.prev()
             elif key == ord('i'):
-                page.staves[state.selected_staff].lh_bot -= 5
-                page.staves[state.selected_staff].rh_top -= 5
-            elif key == ord('I'):
-                page.staves[state.selected_staff].lh_bot -= 1
-                page.staves[state.selected_staff].rh_top -= 1
+                state.page.staves[state.selected_staff].lh_bot -= 2
+                state.page.staves[state.selected_staff].rh_top -= 2
             elif key == ord('m'):
-                page.staves[state.selected_staff].lh_bot += 5
-                page.staves[state.selected_staff].rh_top += 5
-            elif key == ord('M'):
-                page.staves[state.selected_staff].lh_bot += 1
-                page.staves[state.selected_staff].rh_top += 1
-            elif key == ord('e'):
-                page.staves[state.selected_staff].lh_bot += 1
-            elif key == ord('r'):
-                page.staves[state.selected_staff].lh_bot -= 1
+                state.page.staves[state.selected_staff].lh_bot += 2
+                state.page.staves[state.selected_staff].rh_top += 2
+            elif key == ord('e'):   # Extendss staff height.
+                state.page.staves[state.selected_staff].lh_bot += 1
+            elif key == ord('r'):   # Reduces staff height.
+                state.page.staves[state.selected_staff].lh_bot -= 1
             elif key == ord('j'):    # Moves selected bar left.
-                page.staves[state.selected_staff].bars[state.selected_bar] -= 5
-            elif key == ord('J'):    # Moves selected bar left slow.
-                page.staves[state.selected_staff].bars[state.selected_bar] -= 1
+                state.page.staves[state.selected_staff].bars[state.selected_bar] -= 2
             elif key == ord('k'):
                 # Show kerns matching this bar.
                 barno = bars_offset
                 for i in range(0, state.selected_staff):
-                    barno += len(page.staves[i].bars) - 1
+                    barno += len(state.page.staves[i].bars) - 1
                 barno += state.selected_bar
                 # Displays the kern tokens:
                 records = kern.get_text(barno + 1)
@@ -538,11 +618,9 @@ class Staffer:
                     for record in records:
                         print(record)
             elif key == ord('l'):    # Moves selected bar right.
-                page.staves[state.selected_staff].bars[state.selected_bar] += 5
-            elif key == ord('L'):    # Moves selected bar right slow.
-                page.staves[state.selected_staff].bars[state.selected_bar] += 1
+                state.page.staves[state.selected_staff].bars[state.selected_bar] += 2
             elif key == ord('v'):
-                page.reviewed = not page.reviewed
+                state.page.reviewed = not state.page.reviewed
             elif key == 84:     # Key down
                 state.select_next_staff()
             elif key == 82:     # Key up
@@ -553,10 +631,13 @@ class Staffer:
                 state.select_prev_bar()
             elif key == ord('h') or key == ord('?'):
                 print("""
+'s'     Save changes.                      
 'q'     Quit editor without saving.
 'n'     Next page of current score.
 'p'     Previous page of current score.
-'a'     Adds a bar to the selected staff.
+'w'     Adds a staff below the selected one.
+'x'     Deletes the selected staff.
+'b'     Adds a bar to the selected staff.
 'd'     Deletes the selected bar.
 'i/I'   Moves selected staff up, fast & slow.
 'j/J'   Moves selected staff down, fast & slow.
@@ -569,6 +650,7 @@ Up      Selects staff above.
 Down    Selects staff below.
 Right   Selects staff below.
 Left    Selects staff below.
+Click   Adds a bar to the staff under the mouse click.
 'h','?' This help.
                       """)
             else:
