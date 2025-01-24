@@ -205,7 +205,7 @@ class Staffer:
         # The width=20 is the max allowed for chopin/mazurka/mazurka30-3
         # Height of 45_000 is for mozart/piano/sonata/sonata01-1
         staff_peaks, _ = find_peaks(
-            y_proj, width=20, distance=50, height=45_000)
+            y_proj, width=20, distance=50, height=40_000)
 
         # Around each staff peak, find the peaks corresponding to each staff line.
         staff_lines = []
@@ -305,6 +305,25 @@ class Staffer:
             style = (GREEN, 2)
         rgb_image = image.copy()
         for staffno, staff in enumerate(page.staves):
+            if len(staff.bars) == 0:
+                width = rgb_image.shape[1]
+                color, thickness = selected_style if (
+                    staffno == selected_staff) else style
+                cv2.line(
+                    rgb_image,
+                    (0, staff.rh_top),
+                    (width, staff.rh_top),
+                    color, thickness
+                )
+                # Left hand staff
+                cv2.line(
+                    rgb_image,
+                    (0, staff.lh_bot),
+                    (width, staff.lh_bot),
+                    color,
+                    thickness
+                )
+                continue
             # Draws the bars.
             for barno, bar in enumerate(staff.bars):
                 color, thickness = selected_style if (staffno == selected_staff) and (
@@ -345,7 +364,7 @@ class Staffer:
     def edit(self):
         position = 0
         selected_staff, selected_bar = 0, 0
-        max_height = 1024
+        max_height = 992
         data = self.staff()
         kern = KernReader(self.pdf_path)
 
@@ -378,12 +397,30 @@ class Staffer:
                 self.save()
                 print(f"{len(self.data)} pages reviewed and saved to {
                       self.pdf_path.with_suffix('.pkl')}.")
+            elif key == ord('a'):
+                page.staves[selected_staff].bars.append(width // 2)
+            elif key == ord('d'):
+                del page.staves[selected_staff].bars[selected_bar]
             elif key == ord('n') or key == ord(' '):
                 position = (position + 1) % len(data)
                 selected_staff, selected_bar = 0, 0
             elif key == ord('p'):
                 position = max(0, position - 1)
                 selected_staff, selected_bar = 0, 0
+            elif key == ord('i'):
+                page.staves[selected_staff].lh_bot -= 5
+                page.staves[selected_staff].rh_top -= 5
+            elif key == ord('I'):
+                page.staves[selected_staff].lh_bot -= 1
+                page.staves[selected_staff].rh_top -= 1
+            elif key == ord('m'):
+                page.staves[selected_staff].lh_bot += 5
+                page.staves[selected_staff].rh_top += 5
+            elif key == ord('M'):
+                page.staves[selected_staff].lh_bot += 1
+                page.staves[selected_staff].rh_top += 1
+            elif key == ord('x'):
+                page.staves[selected_staff].lh_bot += 1
             elif key == ord('j'):    # Moves selected bar left.
                 page.staves[selected_staff].bars[selected_bar] -= 5
             elif key == ord('J'):    # Moves selected bar left slow.
@@ -406,8 +443,8 @@ class Staffer:
                 page.staves[selected_staff].bars[selected_bar] += 5
             elif key == ord('L'):    # Moves selected bar right slow.
                 page.staves[selected_staff].bars[selected_bar] += 1
-            elif key == ord('m'):
-                page.reviewed = True
+            elif key == ord('v'):
+                page.reviewed = not page.reviewed
             elif key == 84:     # Key up
                 if selected_staff + 1 >= len(page.staves):
                     if position + 1 >= len(data):

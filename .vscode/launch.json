@@ -15,7 +15,7 @@
                 // "cleanup-pdf"
                 // "do"
                 // "update",
-                "edit", "--do-plot", "--no-cache"
+                "edit"
                 // "edit", "bach/inventions/inven01"
             ]
         },
