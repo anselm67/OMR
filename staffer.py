@@ -262,11 +262,12 @@ class Staffer:
     def filter_staff_peaks(self, staff_peaks, peak_heights) -> List[int]:
         # Checks the gaps for a first (title) or last (legend) outlier.
         gaps = staff_peaks[1:] - staff_peaks[:-1]
-        average_gap = sum(gaps) / len(gaps)
-        if gaps[0] > 2 * average_gap:
-            return staff_peaks[1:]
-        elif gaps[-1] > 2 * average_gap:
-            return staff_peaks[:-1]
+        if len(gaps) > 0:
+            average_gap = sum(gaps) / len(gaps)
+            if gaps[0] > 2 * average_gap:
+                return staff_peaks[1:]
+            elif gaps[-1] > 2 * average_gap:
+                return staff_peaks[:-1]
         # Drops the looser, i.e. smallest peak.
         sorted_peaks = sorted(
             zip(staff_peaks, peak_heights),
