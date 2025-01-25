@@ -164,13 +164,17 @@ class NormHandler(BaseHandler):
 
     formatter: TokenFormatter
     output: Optional[TextIO]
-    barno: int
+
+    # The current bar number, when none provided.
+    bar_number: int
+    bar_seen: bool
 
     def __init__(self, output_path: Optional[Path]):
         super(NormHandler, self).__init__()
         self.output = output_path and open(output_path, 'w+')
         self.formatter = TokenFormatter()
-        self.barno = 1
+        self.bar_number = 1
+        self.bar_seen = False
 
     last_metric: Optional[Meter] = None
 
@@ -192,14 +196,25 @@ class NormHandler(BaseHandler):
         return False
 
     def fix_bar(self, tokens: List[Tuple[Spine, Token]]):
+        # If we see a note or chord before any bar, emit a fake bar 0.
+        if any([isinstance(t, (Note, Chord, Rest)) for _, t in tokens]):
+            if not self.bar_seen:
+                bar = Bar("*fake*", 0)
+                if self.output:
+                    self.output.write('\t'.join([
+                        self.formatter.format(spine, bar)for spine, _ in tokens
+                    ]) + "\n")
+                self.bar_seen = True
+
+        # Adjusts the bar number when none provided.
         if all([isinstance(token, Bar) for _, token in tokens]):
             bars = [cast(Bar, token) for _, token in tokens]
             if all([bar.barno < 0 for bar in bars]):
                 for bar in bars:
-                    bar.barno = self.barno
-                self.barno += 1
+                    bar.barno = self.bar_number
+                self.bar_number += 1
             else:
-                self.barno = bars[0].barno + 1
+                self.bar_number = bars[0].barno + 1
 
     def append(self, tokens: List[Tuple[Spine, Token]]):
         tokens = [(spine, token) for spine, token in tokens

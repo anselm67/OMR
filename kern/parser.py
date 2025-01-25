@@ -6,7 +6,6 @@
 # /home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-97-100.krn
 import re
 from abc import ABC, abstractmethod
-from enum import Enum
 from pathlib import Path
 from typing import (
     Generic,
