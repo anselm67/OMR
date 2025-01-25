@@ -21,6 +21,10 @@ class KernReader:
     lines: List[str]
     bars: Dict[int, int] = {}
 
+    @property
+    def bar_count(self) -> int:
+        return len(self.bars)
+
     def __init__(self, path: Path):
         super().__init__()
         self.path = path
@@ -579,7 +583,7 @@ class Staffer:
             if self.selected_bar - 1 < 0:
                 self.select_prev_staff(select_last=True)
             else:
-                self.selected_bar = 0
+                self.selected_bar -= 1
 
         def staff_height(self):
             # Tries to make a good guess at staff height.
@@ -656,7 +660,16 @@ class Staffer:
 
     STAFFER_WINDOW = "Staffer"
 
-    def edit(self, max_height: int = 992):
+    def edit(self, max_height: int = 992) -> bool:
+        """Edits the staff.
+
+        Args:
+            max_height (int, optional): The requested editor height. Defaults to 992.
+
+        Returns:
+            bool: True if the user wishes to continue editing further documents,
+                False otherwise.
+        """
         state = Staffer.EditorState(self.staff())
         kern = KernReader(self.kern_path)
 
@@ -691,8 +704,8 @@ class Staffer:
             update_ui()
 
             key = cv2.waitKey()
-            if key == ord('q'):
-                return
+            if key == ord('q'):         # Quits editing.
+                return False
             elif key == ord('s'):
                 # Marks all pages as reviewed before saving.
                 assert self.data is not None, "Makes the type checker happy."
@@ -707,7 +720,9 @@ class Staffer:
                 state.delete_selected_staff()
             elif key == ord('d'):
                 state.delete_selected_bar()
-            elif key == ord('n') or key == ord(' '):
+            elif key == ord('n'):   # Moves onto the next document if any.
+                return True
+            elif key == ord(' '):
                 state.next()
             elif key == ord('p'):
                 state.prev()
@@ -736,7 +751,7 @@ class Staffer:
                 if records is None:
                     print(f"No records found for bar {barno}")
                 else:
-                    print(f"Bar {barno}:")
+                    print(f"Bar {barno} / {kern.bar_count}:")
                     for record in records:
                         print(record)
             elif key == ord('l'):    # Moves selected bar right.
@@ -754,11 +769,21 @@ class Staffer:
             elif key == ord('1'):
                 self.unlink_pdf()
                 print(f"{self.key} cleaned-up.")
-                return
+                return True
             elif key == ord('t'):
                 print(f"Header for {self.kern_path}")
                 for line in kern.header():
                     print(line)
+            elif key == ord('c'):
+                # Recomputes the bars of the selected staff
+                if state.selected_staff >= 0:
+                    staff = state.page.staves[state.selected_staff]
+                    image = state.image[staff.rh_top:staff.lh_bot, :].copy()
+                    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+                    image = cv2.bitwise_not(image)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+                    image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+                    staff.bars = self.find_bars(image)
             elif key == ord('h') or key == ord('?'):
                 print("""
 's'     Save changes.                      
@@ -768,6 +793,7 @@ class Staffer:
 'p'     Previous page of current score.
 'w'     Adds a staff below the selected one.
 'x'     Deletes the selected staff.
+'c'     Recomputes the bars of the slected staff.
 'b'     Adds a bar to the selected staff.
 'd'     Deletes the selected bar.
 'i/I'   Moves selected staff up, fast & slow.

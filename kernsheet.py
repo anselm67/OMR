@@ -184,7 +184,8 @@ class KernSheet:
                         f"\timslp_url: {entry.imslp_url}\n"
                         f"\tpdf_urls: {entry.pdf_urls}\n"
                     )
-                    staffer.edit()
+                    if not staffer.edit():
+                        break
         else:
             # Edits the given entry.
             staffer = Staffer(
