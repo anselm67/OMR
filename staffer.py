@@ -1,9 +1,10 @@
 
 
+import json
 import logging
 import pickle
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
 
@@ -47,6 +48,9 @@ class KernReader:
         else:
             return None
 
+    def header(self):
+        return self.lines[:10]
+
 
 class Staffer:
     """Finds the layout of a score.
@@ -65,30 +69,58 @@ class Staffer:
 
     @dataclass
     class Page:
+        # Page number in the pdf (counting from 0)
+        page_number: int
 
-        # Page number in the pdf (countint from 0)
-        pageno: int
+        # Image size for the coordinates in this Page
+        image_width: int
+        image_height: int
 
-        # For each double staff (right hand, left hand)
-        # (rh_top: top of rh, lh_bot: bottom of lh)
+        # Staves and validation.
         staves: List['Staffer.Staff']
+        validated: bool
 
-        # Manually reviewed? Turns on when saved through the editor.
-        reviewed: bool = False
+        image_rotation: float = 0.0
 
+        @staticmethod
+        def from_dict(obj: Any):
+            return Staffer.Page(
+                page_number=obj["page_number"],
+                image_width=obj["image_width"],
+                image_height=obj["image_height"],
+                staves=[Staffer.Staff(**x) for x in obj["staves"]],
+                validated=obj["validated"],
+            )
+
+    datadir: Path
+    key: str
+    width: int
     do_plot: bool
     no_cache: bool
-    width: int
-    data: Optional[List[Tuple[MatLike, Page]]] = None
+    data: Optional[List[Tuple[MatLike, Page]]]
+
+    @property
+    def pdf_path(self) -> Path:
+        return (self.datadir / self.key).with_suffix(".pdf")
+
+    @property
+    def kern_path(self) -> Path:
+        return (self.datadir / self.key).with_suffix(".krn")
+
+    @property
+    def json_path(self) -> Path:
+        return (self.datadir / self.key).with_suffix(".json")
 
     def __init__(
-        self, pdf_path: Path,
+        self, datadir: Path, pdf_path: str,
         width: int = WIDTH, do_plot: bool = False, no_cache: bool = False
     ):
-        self.pdf_path = pdf_path
+        self.datadir = Path(datadir)
+        self.key = pdf_path
         self.width = width
         self.do_plot = do_plot
         self.no_cache = no_cache
+        self.data = None
 
     def denoise(self, image: MatLike, block_size: int = -1, C: int = 2) -> MatLike:
         if block_size > 0:
@@ -114,50 +146,86 @@ class Staffer:
             edges, 1, np.pi / 14400, hough_thresold,
             min_theta=np.radians(80), max_theta=np.radians(100)
         )
-        hough_lines = hough_lines.squeeze(1)
-        # Computes the median average angle:
-        median_angle = np.median(hough_lines[:, 1])  # type: ignore
-        return np.degrees(median_angle) - 90.0
+        if hough_lines is not None:
+            hough_lines = hough_lines.squeeze(1)
+            # Computes the median average angle:
+            median_angle = np.median(hough_lines[:, 1])  # type: ignore
+            return np.degrees(median_angle) - 90.0
+        else:
+            return 0.0
 
     def deskew(
         self,
         image: MatLike,
         min_rotation_angle_degrees=0.05,
-    ):
+    ) -> Tuple[float, MatLike]:
         angle = self.average_angle(image)
         if angle < min_rotation_angle_degrees:
             # For a 1200px width, 600px center to side:
             # height = 600 * sin(0.1 degrees) ~ 1 px
-            return image
+            return 0, image
         height, width = image.shape
         matrix = cv2.getRotationMatrix2D((width // 2, height//2), angle, 1)
         image = cv2.warpAffine(image, matrix, (width, height))
         print(f"\t{angle:2.4f} rotation => {
               self.average_angle(image):2.4f} degrees.")
-        return image
+        return angle, image
 
-    def transform(self, orig_image: MatLike) -> MatLike:
+    def transform(self, orig_image: MatLike) -> Tuple[float, MatLike]:
         image = cv2.cvtColor(np.array(orig_image), cv2.COLOR_RGB2GRAY)
         image = self.denoise(image)
-        image = self.deskew(image)
+        rotation_angle, image = self.deskew(image)
         # Some of the operations above de-binarize the images.
         image = self.denoise(image)
-        return image
+        return float(rotation_angle), image
 
-    def decode_images(self) -> List[MatLike]:
-        # Runs the pdf conversion with all transformations.
-        pdf = convert_from_path(self.pdf_path.with_suffix(".pdf"))
+    def decode_images(self, pages: Optional[List[Page]] = None) -> List[MatLike]:
+        """Converts apdf file into a list of images, one per page.
+
+        The images produced can be transformed in two ways:
+        - When no pages are provided, the images are simply resized to the Staffer width.
+        - When pages are provided, each image is transformed according to its associated 
+            Page. The transforms are a resize - has driven by Page.image_width 
+            and Page.image_height - and a rotation - as driven by Page.image_rotation.
+
+        Args:
+            pages (Optional[List[Page]]): The optional pages associated to the pdf. 
+
+        Returns:
+            List[MatLike]: List of pages within the pdf as images.
+        """
+        pdf = convert_from_path(self.pdf_path)
+
         # Rescale to requested width and pad to requested height.
+        def transform(image, page: Optional[Staffer.Page] = None) -> MatLike:
+            if page:
+                h, w = image.shape[:-1]
+                scale = page.image_width / w
+                image = cv2.resize(
+                    image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
+                )
 
-        def resize(image) -> MatLike:
-            h, w = image.shape[:-1]
-            scale = self.width / w
-            image = cv2.resize(
-                image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
-            )
+                if page.image_rotation > 0:
+                    height, width = image.shape
+                    matrix = cv2.getRotationMatrix2D(
+                        (width // 2, height//2), page.image_rotation, 1)
+                    image = cv2.warpAffine(image, matrix, (width, height))
+
+            else:
+                h, w = image.shape[:-1]
+                scale = self.width / w
+                image = cv2.resize(
+                    image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
+                )
             return image
 
-        return [resize(np.array(image)) for image in pdf]
+        if pages is None:
+            return [transform(np.array(image)) for image in pdf]
+        else:
+            return [
+                transform(np.array(image), page)
+                for page, image in zip(pages, pdf)
+            ]
 
     def line_indices(self, lines: List[int]) -> List[Tuple[int, int]]:
         idx = 0
@@ -206,6 +274,7 @@ class Staffer:
         return staff_peaks[:-1]
 
     def decode_page(self, orig_image: MatLike, pageno: int) -> Page:
+        image_rotation, orig_image = self.transform(orig_image)
         # Computes the vertical and horizontal projections.
         image = cv2.bitwise_not(orig_image)
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 1))
@@ -271,7 +340,14 @@ class Staffer:
             print(f"Trimming off {len(staff_lines) -
                   length_10} bottom staff lines.")
 
-        page = Staffer.Page(pageno, staves=[])
+        page = Staffer.Page(
+            page_number=pageno,
+            image_width=orig_image.shape[1],
+            image_height=orig_image.shape[0],
+            staves=list(),
+            validated=False,
+            image_rotation=image_rotation,
+        )
         positions = [
             (staff_lines[ridx], staff_lines[lidx]) for ridx, lidx in self.line_indices(staff_lines)
         ]
@@ -282,36 +358,47 @@ class Staffer:
         image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
         for rh_top, lh_bot in positions:
             bars = self.find_bars(image[rh_top:lh_bot, :])
-            page.staves.append(Staffer.Staff(rh_top, lh_bot, bars))
+            page.staves.append(Staffer.Staff(int(rh_top), int(lh_bot), bars))
 
         return page
 
-    def load_if_exists(self) -> bool:
+    def save(self):
+        assert self.data is not None, "Can't save empty data."
+        with open(self.json_path, "w+") as fp:
+            json.dump({
+                "pdf_path": self.key,
+                "pages": [asdict(page) for _, page in self.data],
+            }, fp, indent=4)
+
+    def load_if_exists(self):
         if self.no_cache:
             return False
-        pkl_path = self.pdf_path.with_suffix(".pkl")
-        if pkl_path.exists():
-            with open(pkl_path, "rb") as fp:
-                self.data = cast(
-                    List[Tuple[MatLike, Staffer.Page]], pickle.load(fp))
-                return True
+        if self.json_path.exists():
+            with open(self.json_path, "r") as fp:
+                obj = json.load(fp)
+            pages = [Staffer.Page.from_dict(s) for s in obj['pages']]
+            assert obj['pdf_path'] == self.key, f"Expecting key {
+                self.key} to match .json pdf path {obj['pdf_path']}."
+            self.data = list(zip(self.decode_images(pages), pages))
+            return True
         return False
-
-    def save(self):
-        pkl_path = self.pdf_path.with_suffix(".pkl")
-        with open(pkl_path, "wb+") as fp:
-            pickle.dump(self.data, fp)
 
     def staff(self) -> List[Tuple[MatLike, Page]]:
         if self.data is None:
             if not self.load_if_exists():
                 images = self.decode_images()
-                staves = [self.decode_page(self.transform(image), pageno)
-                          for pageno, image in enumerate(images)]
+                staves = [self.decode_page(image, page_number)
+                          for page_number, image in enumerate(images)]
                 self.data = list(zip(images, staves))
                 self.save()
-        assert self.data is not None, f"{self.pdf_path}: no staff found."
+        assert self.data is not None, f"{self.key}: no staff found."
         return self.data
+
+    def unlink_pdf(self):
+        # We can't work with this .pdf file, remove it and kill any saved state.
+        self.pdf_path.unlink(missing_ok=True)
+        self.json_path.unlink(missing_ok=True)
+        self.data = None
 
     def draw_page(
         self, image: MatLike, page: Page, bar_offset: int,
@@ -323,9 +410,18 @@ class Staffer:
         RED = (0, 0, 255)
         GREEN = (0, 255, 0)
         style, selected_style = (BLUE, 2), (RED, 4)
-        if page.reviewed:
+        if page.validated:
             style = (GREEN, 2)
         rgb_image = image.copy()
+        if len(page.staves) == 0:
+            # That's fine let the user know.
+            cv2.putText(
+                rgb_image, "Page Validated" if page.validated else "Validate that page.",
+                (400, 100),
+                cv2.FONT_HERSHEY_SIMPLEX, fontScale=1,
+                color=style[0], thickness=style[1]
+            )
+
         for staffno, staff in enumerate(page.staves):
             if len(staff.bars) == 0:
                 width = rgb_image.shape[1]
@@ -482,22 +578,36 @@ class Staffer:
             else:
                 self.selected_bar = 0
 
-        def add_staff(self, offset: int = -1):
+        def staff_height(self):
+            # Tries to make a good guess at staff height.
+            heights = [staff.lh_bot -
+                       staff.rh_top for staff in self.page.staves]
+            if len(heights) > 0:
+                return int(sum(heights) / len(heights))
+            else:
+                return 128
+
+        def add_staff(self):
+            height = self.staff_height()
             if self.selected_staff < 0:
+                ypos = 100
                 self.page.staves.append(Staffer.Staff(
-                    rh_top=100,
-                    lh_bot=200,
+                    rh_top=ypos,
+                    lh_bot=ypos + height,
                     bars=list()
                 ))
+                self.selected_staff = len(self.page.staves) - 1
             else:
+                ypos = self.page.staves[self.selected_staff].lh_bot + 10
                 self.page.staves.insert(
                     self.selected_staff + 1,
                     Staffer.Staff(
-                        rh_top=self.page.staves[self.selected_staff].lh_bot + 10,
-                        lh_bot=self.page.staves[self.selected_staff].lh_bot + 110,
+                        rh_top=ypos,
+                        lh_bot=ypos + height,
                         bars=list()
                     )
                 )
+                self.selected_staff += 1
 
         def add_bar(self, offset: int = -1):
             staff = self.page.staves[self.selected_staff]
@@ -515,10 +625,14 @@ class Staffer:
             self.selected_bar = staff.bars.index(offset)
 
         def delete_selected_bar(self):
+            if self.selected_bar < 0:
+                return
             del self.page.staves[self.selected_staff].bars[self.selected_bar]
             self.selected_bar = max(0, self.selected_bar - 1)
 
         def delete_selected_staff(self):
+            if self.selected_staff < 0:
+                return
             del self.page.staves[self.selected_staff]
             if len(self.page.staves) == 0:
                 self.selected_staff = -1
@@ -541,7 +655,7 @@ class Staffer:
 
     def edit(self, max_height: int = 992):
         state = Staffer.EditorState(self.staff())
-        kern = KernReader(self.pdf_path)
+        kern = KernReader(self.kern_path)
 
         cv2.namedWindow(self.STAFFER_WINDOW)
 
@@ -578,7 +692,7 @@ class Staffer:
                 assert self.data is not None, "Makes the type checker happy."
                 self.save()
                 print(f"{len(self.data)} pages reviewed and saved to {
-                      self.pdf_path.with_suffix('.pkl')}.")
+                      self.json_path}.")
             elif key == ord('a'):
                 state.add_bar()
             elif key == ord('w'):
@@ -620,7 +734,7 @@ class Staffer:
             elif key == ord('l'):    # Moves selected bar right.
                 state.page.staves[state.selected_staff].bars[state.selected_bar] += 2
             elif key == ord('v'):
-                state.page.reviewed = not state.page.reviewed
+                state.page.validated = not state.page.validated
             elif key == 84:     # Key down
                 state.select_next_staff()
             elif key == 82:     # Key up
@@ -629,10 +743,19 @@ class Staffer:
                 state.select_next_bar()
             elif key == 81:     # Key right
                 state.select_prev_bar()
+            elif key == ord('1'):
+                self.unlink_pdf()
+                print(f"{self.key} cleaned-up.")
+                return
+            elif key == ord('t'):
+                print(f"Header for {self.kern_path}")
+                for line in kern.header():
+                    print(line)
             elif key == ord('h') or key == ord('?'):
                 print("""
 's'     Save changes.                      
 'q'     Quit editor without saving.
+'1'     Invalidate .pdf file by deleting it.
 'n'     Next page of current score.
 'p'     Previous page of current score.
 'w'     Adds a staff below the selected one.
@@ -656,8 +779,10 @@ Click   Adds a bar to the staff under the mouse click.
             else:
                 print(f"Key: {key}")
 
-    def is_reviewed(self) -> bool:
+    def is_validated(self) -> bool:
+        if not self.load_if_exists():
+            return False
         for _, page in self.staff():
-            if not page.reviewed:
+            if not page.validated:
                 return False
         return True

@@ -1,5 +1,7 @@
+import dataclasses
 import os
 import subprocess
+import typing
 from pathlib import Path
 from typing import Iterable, Optional, TypeAlias, Union
 
