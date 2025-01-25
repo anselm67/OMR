@@ -74,6 +74,9 @@ class KernSheet:
     def pdf_path(self, key: str) -> Path:
         return (self.datadir / key).with_suffix(".pdf")
 
+    def json_path(self, key: str) -> Path:
+        return (self.datadir / key).with_suffix(".json")
+
     def load_catalog(self):
         path = self.datadir / self.CATALOG_NAME
         self.version = 1
@@ -102,20 +105,29 @@ class KernSheet:
             f"&file={quote(kern_file.name)}&format=pdf"
         )
 
-    def missing(self):
+    def stats(self):
         """Checks for orphaned .krn files with no entries in the catalog.
         """
-        total_count = 0
-        miss_count = 0
+        total_count, miss_count, pdf_count, json_count = 0, 0, 0, 0
         for root, _, filenames in os.walk(self.datadir):
             for filename in filenames:
                 file = Path(root) / filename
                 if file.suffix == ".krn":
                     total_count += 1
-                    kern_path = path_substract(self.datadir, file)
-                    if not str(kern_path.with_suffix("")) in self.entries:
+                    key = str(path_substract(
+                        self.datadir, file).with_suffix(""))
+                    if not key in self.entries:
                         miss_count += 1
-        print(f"{total_count} kern files, {miss_count} missing.")
+                    if self.pdf_path(key).exists():
+                        pdf_count += 1
+                    if self.json_path(key).exists():
+                        json_count += 1
+        print(
+            f"{total_count} kern files:\n"
+            f"\twithout entries: {miss_count}\n"
+            f"\twith pdf       : {pdf_count}\n"
+            f"\twith json      : {json_count}\n"
+        )
 
     KERN_KEYWORDS_RE = re.compile(r'^!!!(COM|OPR|OTL|OPS):\s*(.*)$')
 
@@ -215,9 +227,9 @@ def edit(ctx, kern_path: Optional[str], no_cache: bool, do_plot: bool):
 
 @click.command()
 @click.pass_context
-def missing(ctx):
+def stats(ctx):
     kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.missing()
+    kern_sheet.stats()
 
 
 @click.command()
@@ -244,7 +256,7 @@ cli.add_command(merge_asap)
 
 cli.add_command(fix_imslp)
 cli.add_command(edit)
-cli.add_command(missing)
+cli.add_command(stats)
 cli.add_command(update)
 
 if __name__ == '__main__':
