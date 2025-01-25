@@ -208,6 +208,7 @@ class NormHandler(BaseHandler):
 
         # Adjusts the bar number when none provided.
         if all([isinstance(token, Bar) for _, token in tokens]):
+            self.bar_seen = True
             bars = [cast(Bar, token) for _, token in tokens]
             if all([bar.barno < 0 for bar in bars]):
                 for bar in bars:

@@ -41,6 +41,9 @@ class KernReader:
                 self.bars[int(m.group(1))] = lineno
         logging.info(f"{len(self.bars) - 1} bars in {self.path}")
 
+    def has_bar_zero(self):
+        return 0 in self.bars
+
     def get_text(self, barno: int, count: int = 10) -> Optional[List[str]]:
         pos = self.bars.get(barno, -1)
         if pos >= 0:
@@ -455,7 +458,7 @@ class Staffer:
                 # Renders the bar number only if not last of staff.
                 if barno != len(staff.bars) - 1:
                     cv2.putText(
-                        rgb_image, str(bar_offset + barno + 1),
+                        rgb_image, str(bar_offset + barno),
                         (bar+3, staff.rh_top - 10),
                         cv2.FONT_HERSHEY_SIMPLEX, fontScale=1,
                         color=color, thickness=thickness)
@@ -682,6 +685,9 @@ class Staffer:
         while True:
 
             bars_offset = state.get_bar_offset()
+            if not kern.has_bar_zero():
+                bars_offset += 1
+
             update_ui()
 
             key = cv2.waitKey()
@@ -723,12 +729,14 @@ class Staffer:
                 for i in range(0, state.selected_staff):
                     barno += len(state.page.staves[i].bars) - 1
                 barno += state.selected_bar
-                # Displays the kern tokens:
-                records = kern.get_text(barno + 1)
+                # Clears te terminal and displays the kern tokens:
+                print('\033[2J', end='')
+                print('\033[H', end='')
+                records = kern.get_text(barno)
                 if records is None:
-                    print(f"No records found for bar {barno + 1}")
+                    print(f"No records found for bar {barno}")
                 else:
-                    print(f"Bar {barno + 1}:")
+                    print(f"Bar {barno}:")
                     for record in records:
                         print(record)
             elif key == ord('l'):    # Moves selected bar right.
