@@ -2,9 +2,8 @@
 
 import json
 import logging
-import pickle
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, cast
 
@@ -91,12 +90,9 @@ class Staffer:
 
         @staticmethod
         def from_dict(obj: Any):
-            return Staffer.Page(
-                page_number=obj["page_number"],
-                image_width=obj["image_width"],
-                image_height=obj["image_height"],
-                staves=[Staffer.Staff(**x) for x in obj["staves"]],
-                validated=obj["validated"],
+            return replace(
+                Staffer.Page(**obj),
+                staves=[Staffer.Staff(**x) for x in obj["staves"]]
             )
 
     datadir: Path
@@ -167,7 +163,7 @@ class Staffer:
         min_rotation_angle_degrees=0.05,
     ) -> Tuple[float, MatLike]:
         angle = self.average_angle(image)
-        if angle < min_rotation_angle_degrees:
+        if abs(angle) < min_rotation_angle_degrees:
             # For a 1200px width, 600px center to side:
             # height = 600 * sin(0.1 degrees) ~ 1 px
             return 0, image
@@ -212,8 +208,8 @@ class Staffer:
                     image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
                 )
 
-                if page.image_rotation > 0:
-                    height, width = image.shape
+                if abs(page.image_rotation) > 0:
+                    height, width = image.shape[:-1]
                     matrix = cv2.getRotationMatrix2D(
                         (width // 2, height//2), page.image_rotation, 1)
                     image = cv2.warpAffine(image, matrix, (width, height))
@@ -789,6 +785,7 @@ class Staffer:
 's'     Save changes.                      
 'q'     Quit editor without saving.
 '1'     Invalidate .pdf file by deleting it.
+'2'     Rotates the image by 1 degree.
 'n'     Next page of current score.
 'p'     Previous page of current score.
 'w'     Adds a staff below the selected one.
