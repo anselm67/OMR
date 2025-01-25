@@ -15,18 +15,16 @@
 import json
 import logging
 import os
-import pickle
 import random
 import re
 import time
 from dataclasses import asdict, dataclass, field, replace
 from functools import reduce
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Dict, List, Optional, cast
 from urllib.parse import quote
 
 import click
-from cv2.typing import MatLike
 
 from imslp import IMSLP
 from make_kernsheet import make_kern_sheet, merge_asap
@@ -36,8 +34,6 @@ from utils import path_substract
 
 @dataclass(frozen=True)
 class Entry:
-    kern_file: str
-
     # The source dataset for this entry, "kern-score/*.zip" or "asap"
     source: str
 
@@ -65,11 +61,18 @@ class KernSheet:
 
     datadir: Path
     version: int = 1
+    entries: Dict[str, Entry]
 
     def __init__(self, datadir: Path):
         super().__init__()
         self.datadir = Path(datadir)
         self.load_catalog()
+
+    def kern_path(self, key: str) -> Path:
+        return (self.datadir / key).with_suffix(".krn")
+
+    def pdf_path(self, key: str) -> Path:
+        return (self.datadir / key).with_suffix(".pdf")
 
     def load_catalog(self):
         path = self.datadir / self.CATALOG_NAME
@@ -109,14 +112,15 @@ class KernSheet:
                 file = Path(root) / filename
                 if file.suffix == ".krn":
                     total_count += 1
-                    kern_file = path_substract(self.datadir, file)
-                    if not str(kern_file) in self.entries:
+                    kern_path = path_substract(self.datadir, file)
+                    if not str(kern_path.with_suffix("")) in self.entries:
                         miss_count += 1
         print(f"{total_count} kern files, {miss_count} missing.")
 
     KERN_KEYWORDS_RE = re.compile(r'^!!!(COM|OPR|OTL|OPS):\s*(.*)$')
 
-    def google_keywords(self, kern_file: str) -> str:
+    def google_keywords(self, key: str) -> str:
+        kern_path = self.kern_path(key)
         keywords = list()
 
         def add(keyword: str):
@@ -125,7 +129,7 @@ class KernSheet:
                 keywords.append(word.strip())
 
         # Checks inside the file for COM and OTL:
-        with open(self.datadir / kern_file, "r") as fp:
+        with open(kern_path, "r") as fp:
             for line in fp:
                 line = line.strip()
                 if not line.startswith("!!!"):
@@ -134,7 +138,7 @@ class KernSheet:
                     add(m.group(2).lower())
         # Adds in the path components:
         if len(keywords) == 0:
-            add(str(Path(kern_file).with_suffix("")))
+            add(key)
         return " ".join(
             reduce(lambda l, x: l.append(x)     # type: ignore
                    or l if x not in l else l, keywords, list())
@@ -147,7 +151,7 @@ class KernSheet:
                 continue
             logging.info(f"[fix_imslp]: {key}")
 
-            imslp_query = self.google_keywords(entry.kern_file)
+            imslp_query = self.google_keywords(key)
             try:
                 imslp_url = imslp.find_imslp(imslp_query)
                 if imslp_url is None:
@@ -164,28 +168,27 @@ class KernSheet:
             time.sleep(20 + random.randint(10, 20))
 
     def edit(
-        self, kern_path: Optional[str] = None, no_cache: bool = False, do_plot: bool = False
+        self, key: Optional[str] = None, no_cache: bool = False, do_plot: bool = False
     ):
-        if kern_path is None:
+        if key is None:
             # Loops through all samples in need of verification, skips non pdf.
             for key, entry in self.entries.items():
-                path = self.datadir / key
-                if not path.with_suffix(".pdf").exists():
+                if not self.pdf_path(key).exists():
                     continue
                 staffer = Staffer(
-                    self.datadir / key, do_plot=do_plot, no_cache=no_cache
+                    self.datadir, key, do_plot=do_plot, no_cache=no_cache
                 )
-                if not staffer.is_reviewed():
+                if not staffer.is_validated():
                     print(
                         f"Editing {key}\n"
-                        f"\timslp_url: {entry.imslp_url}"
-                        f"\tpdf_urls: {entry.pdf_urls}"
+                        f"\timslp_url: {entry.imslp_url}\n"
+                        f"\tpdf_urls: {entry.pdf_urls}\n"
                     )
                     staffer.edit()
         else:
             # Edits the given entry.
             staffer = Staffer(
-                self.datadir / kern_path, do_plot=do_plot, no_cache=no_cache
+                self.datadir, key, do_plot=do_plot, no_cache=no_cache
             )
             staffer.edit()
 
