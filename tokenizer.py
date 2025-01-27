@@ -395,6 +395,8 @@ def tokenize(
             handler = NormHandler(output_path)
             if not parse_file(path, handler, show_failed, enable_warnings):
                 failed += 1
+                if output_path is not None:
+                    output_path.unlink(missing_ok=True)
     print(f"Tokenized {count} files, {failed} failed.")
 
 
