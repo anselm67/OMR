@@ -172,61 +172,29 @@ class Staffer:
               self.average_angle(image):2.4f} degrees.")
         return angle, image
 
-    def transform(self, orig_image: MatLike) -> Tuple[float, MatLike]:
-        image = cv2.cvtColor(np.array(orig_image), cv2.COLOR_RGB2GRAY)
-        image = self.denoise(image)
-        rotation_angle, image = self.deskew(image)
-        # Some of the operations above de-binarize the images.
-        image = self.denoise(image)
-        return float(rotation_angle), image
+    # Rescales and rotates the image according to the given page.
+    def apply_page_transforms(self, image: MatLike, page: Page) -> MatLike:
+        h, w = image.shape[:-1]
+        scale = page.image_width / w
+        image = cv2.resize(
+            image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
+        )
 
-    def decode_images(self, pages: Optional[List[Page]] = None) -> List[MatLike]:
-        """Converts apdf file into a list of images, one per page.
+        if abs(page.image_rotation) > 0:
+            height, width = image.shape[:-1]
+            matrix = cv2.getRotationMatrix2D(
+                (width // 2, height//2), page.image_rotation, 1)
+            image = cv2.warpAffine(image, matrix, (width, height))
 
-        The images produced can be transformed in two ways:
-        - When no pages are provided, the images are simply resized to the Staffer width.
-        - When pages are provided, each image is transformed according to its associated 
-            Page. The transforms are a resize - has driven by Page.image_width 
-            and Page.image_height - and a rotation - as driven by Page.image_rotation.
+        return image
 
-        Args:
-            pages (Optional[List[Page]]): The optional pages associated to the pdf. 
-
-        Returns:
-            List[MatLike]: List of pages within the pdf as images.
-        """
+    def load_images(self, pages: List[Page]) -> List[MatLike]:
         pdf = convert_from_path(self.pdf_path)
 
-        # Rescale to requested width and pad to requested height.
-        def transform(image, page: Optional[Staffer.Page] = None) -> MatLike:
-            if page:
-                h, w = image.shape[:-1]
-                scale = page.image_width / w
-                image = cv2.resize(
-                    image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
-                )
-
-                if abs(page.image_rotation) > 0:
-                    height, width = image.shape[:-1]
-                    matrix = cv2.getRotationMatrix2D(
-                        (width // 2, height//2), page.image_rotation, 1)
-                    image = cv2.warpAffine(image, matrix, (width, height))
-
-            else:
-                h, w = image.shape[:-1]
-                scale = self.width / w
-                image = cv2.resize(
-                    image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
-                )
-            return image
-
-        if pages is None:
-            return [transform(np.array(image)) for image in pdf]
-        else:
-            return [
-                transform(np.array(image), page)
-                for page, image in zip(pages, pdf)
-            ]
+        return [
+            self.apply_page_transforms(np.array(image), page)
+            for image, page in zip(pdf, pages)
+        ]
 
     def line_indices(self, lines: List[int]) -> List[Tuple[int, int]]:
         idx = 0
@@ -274,6 +242,19 @@ class Staffer:
         )
         staff_peaks = [staff_peak for staff_peak, _ in sorted_peaks]
         return staff_peaks[:-1]
+
+    def transform(self, orig_image: MatLike) -> Tuple[float, MatLike]:
+        image = cv2.cvtColor(np.array(orig_image), cv2.COLOR_RGB2GRAY)
+        h, w = image.shape
+        scale = self.width / w
+        image = cv2.resize(
+            image, (self.width, int(h * scale)), interpolation=cv2.INTER_AREA
+        )
+        image = self.denoise(image)
+        rotation_angle, image = self.deskew(image)
+        # Some of the operations above de-binarize the images.
+        image = self.denoise(image)
+        return float(rotation_angle), image
 
     def decode_page(self, orig_image: MatLike, pageno: int) -> Page:
         image_rotation, orig_image = self.transform(orig_image)
@@ -364,6 +345,18 @@ class Staffer:
 
         return page
 
+    def decode_images(self) -> List[Tuple[MatLike, Page]]:
+        pdf = convert_from_path(self.pdf_path)
+
+        pages = [
+            self.decode_page(np.array(image), pageno) for pageno, image in enumerate(pdf)
+        ]
+
+        return [
+            (self.apply_page_transforms(np.array(image), page), page)
+            for image, page in zip(pdf, pages)
+        ]
+
     def save(self):
         assert self.data is not None, "Can't save empty data."
         with open(self.json_path, "w+") as fp:
@@ -381,17 +374,14 @@ class Staffer:
             pages = [Staffer.Page.from_dict(s) for s in obj['pages']]
             assert obj['pdf_path'] == self.key, f"Expecting key {
                 self.key} to match .json pdf path {obj['pdf_path']}."
-            self.data = list(zip(self.decode_images(pages), pages))
+            self.data = list(zip(self.load_images(pages), pages))
             return True
         return False
 
     def staff(self) -> List[Tuple[MatLike, Page]]:
         if self.data is None:
             if not self.load_if_exists():
-                images = self.decode_images()
-                staves = [self.decode_page(image, page_number)
-                          for page_number, image in enumerate(images)]
-                self.data = list(zip(images, staves))
+                self.data = self.decode_images()
                 self.save()
         assert self.data is not None, f"{self.key}: no staff found."
         return self.data
