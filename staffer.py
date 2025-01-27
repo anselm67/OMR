@@ -531,10 +531,11 @@ class Staffer:
                 self.selected_staff = staff_count - 1
             else:
                 self.selected_staff = 0
-            if self.selected_staff < 0 or len(self.page.staves[self.selected_staff].bars) == 0:
+            bars_len = len(self.page.staves[self.selected_staff].bars)
+            if self.selected_staff < 0 or bars_len == 0:
                 self.selected_bar = -1
             else:
-                self.selected_bar = 0
+                self.selected_bar = bars_len - 1 if select_last else 0
 
         def select_prev_staff(self, select_last: bool = False):
             if self.selected_staff - 1 < 0:
