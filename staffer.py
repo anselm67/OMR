@@ -38,10 +38,8 @@ class KernReader:
         for lineno in range(0, len(self.lines)):
             line = self.lines[lineno]
             if (m := self.BAR_RE.match(line)):
-                if line.startswith("=="):
-                    # Final bar, we're done.
-                    break
-                self.bars[int(m.group(1))] = lineno
+                if m.group(1) is not None:
+                    self.bars[int(m.group(1))] = lineno
         logging.info(f"{len(self.bars) - 1} bars in {self.path}")
 
     def has_bar_zero(self):
@@ -768,7 +766,7 @@ class Staffer:
                 print(f"{self.key} cleaned-up.")
                 return True
             elif key == ord('t'):
-                print(f"Header for {self.kern_path}")
+                print(f"Header for {self.kern_path} - {kern.bar_count} bars")
                 for line in kern.header():
                     print(line)
             elif key == ord('c'):

@@ -180,7 +180,10 @@ class KernSheet:
             time.sleep(20 + random.randint(10, 20))
 
     def edit(
-        self, key: Optional[str] = None, no_cache: bool = False, do_plot: bool = False
+        self,
+        key: Optional[str] = None,
+        all: bool = True,
+        no_cache: bool = False, do_plot: bool = False
     ):
         if key is None:
             # Loops through all samples in need of verification, skips non pdf.
@@ -190,7 +193,7 @@ class KernSheet:
                 staffer = Staffer(
                     self.datadir, key, do_plot=do_plot, no_cache=no_cache
                 )
-                if not staffer.is_validated():
+                if all or not staffer.is_validated():
                     print(
                         f"Editing {key}\n"
                         f"\timslp_url: {entry.imslp_url}\n"
@@ -215,14 +218,16 @@ def fix_imslp(ctx):
 
 @click.command()
 @click.argument("kern_path", type=str, required=False, default=None)
+@click.option("--all", "all", is_flag=True, default=False,
+              help="Edit all files, even validated ones.")
 @click.option("--no-cache", "no_cache", is_flag=True, default=False,
               help="Don't use cached versions of the pdf & staff.")
 @click.option("--do-plot", "do_plot", is_flag=True, default=False,
               help="Don't use cached versions of the pdf & staff.")
 @click.pass_context
-def edit(ctx, kern_path: Optional[str], no_cache: bool, do_plot: bool):
+def edit(ctx, kern_path: Optional[str], all: bool, no_cache: bool, do_plot: bool):
     kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.edit(kern_path, no_cache=no_cache, do_plot=do_plot)
+    kern_sheet.edit(kern_path, all=all, no_cache=no_cache, do_plot=do_plot)
 
 
 @click.command()

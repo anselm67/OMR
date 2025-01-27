@@ -67,10 +67,11 @@ class TokenFormatter:
 
     def format_bar(self, spine: Spine, token: Token) -> str:
         bar = cast(Bar, token)
+        barno_str = str(bar.barno) if bar.barno >= 0 else ""
         if bar.is_final:
-            return "=="
+            return f"=={barno_str}"
         else:
-            return f"={bar.barno}"
+            return f"={barno_str}"
 
     def format_rest(self, spine: Spine, token: Token) -> str:
         rest = cast(Rest, token)
@@ -166,15 +167,19 @@ class NormHandler(BaseHandler):
     output: Optional[TextIO]
 
     # The current bar number, when none provided.
+    bar_numbering: bool
     bar_number: int
     bar_seen: bool
+    bar_zero: bool
 
     def __init__(self, output_path: Optional[Path]):
         super(NormHandler, self).__init__()
         self.output = output_path and open(output_path, 'w+')
         self.formatter = TokenFormatter()
+        self.bar_numbering = False
         self.bar_number = 1
         self.bar_seen = False
+        self.bar_zero = False
 
     last_metric: Optional[Meter] = None
 
@@ -195,34 +200,43 @@ class NormHandler(BaseHandler):
             return True
         return False
 
-    def fix_bar(self, tokens: List[Tuple[Spine, Token]]):
+    def fix_bar(self, tokens: List[Tuple[Spine, Token]]) -> bool:
         # If we see a note or chord before any bar, emit a fake bar 0.
         if any([isinstance(t, (Note, Chord, Rest)) for _, t in tokens]):
-            if not self.bar_seen:
-                bar = Bar("*fake*", 0)
+            if not self.bar_zero:
+                bar = Bar("*fake*", 0, False, False, False, False)
                 if self.output:
                     self.output.write('\t'.join([
                         self.formatter.format(spine, bar)for spine, _ in tokens
                     ]) + "\n")
-                self.bar_seen = True
+                self.bar_zero = True
 
         # Adjusts the bar number when none provided.
         if all([isinstance(token, Bar) for _, token in tokens]):
-            self.bar_seen = True
             bars = [cast(Bar, token) for _, token in tokens]
-            if all([bar.barno < 0 for bar in bars]):
+            if self.bar_number <= 2:
+                if all([bar.barno < 0 and bar.requires_valid_bar_number() for bar in bars]):
+                    self.bar_numbering = True
+                elif any([bar.requires_valid_bar_number() for bar in bars]):
+                    self.bar_number += 1
+                self.bar_zero = True
+
+            if self.bar_numbering:
                 for bar in bars:
                     bar.barno = self.bar_number
                 self.bar_number += 1
-            else:
-                self.bar_number = bars[0].barno + 1
+
+            return any([bar.barno >= 0 for bar in bars])
+
+        return True
 
     def append(self, tokens: List[Tuple[Spine, Token]]):
         tokens = [(spine, token) for spine, token in tokens
                   if not isinstance(spine, IgnoredSpine)]
         if self.should_skip(tokens):
             return
-        self.fix_bar(tokens)
+        if not self.fix_bar(tokens):
+            return
         if self.output:
             self.output.write('\t'.join([
                 self.formatter.format(spine, token)for spine, token in tokens
@@ -265,6 +279,7 @@ def parse_file(
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> bool:
+    print(f"+ {path}")
     try:
         if isinstance(handler_obj, Parser.Handler):
             handler = cast(Parser.Handler, handler_obj)

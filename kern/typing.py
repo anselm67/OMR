@@ -151,11 +151,31 @@ class Bar(Token):
     text: str
     barno: int
     is_final: bool
+    is_repeat_start: bool
+    is_repeat_end: bool
+    is_invisible: bool
 
-    def __init__(self, text: str, barno: int, is_final: bool = False):
+    def __init__(
+        self, text: str, barno: int,
+        is_final: bool,
+        is_repeat_start: bool,
+        is_repeat_end: bool,
+        is_invisible: bool
+    ):
         self.text = text
         self.barno = barno
-        self.is_final = (text == "==")
+        self.is_final = is_final
+        self.is_repeat_start = is_repeat_start
+        self.is_repeat_end = is_repeat_end
+        self.is_invisible = is_invisible
+
+    def requires_valid_bar_number(self):
+        return not (
+            self.is_final or
+            self.is_repeat_start or
+            self.is_repeat_end or
+            self.is_invisible
+        )
 
 
 @dataclass
