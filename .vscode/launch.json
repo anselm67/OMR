@@ -20,17 +20,6 @@
             ]
         },
         {
-            "name": "Staffer",
-            "type": "debugpy",
-            "request": "launch",
-            "program": "staffer.py",
-            "console": "integratedTerminal",
-            "args": [
-                "staff","/home/anselm/Downloads/KernSheet/chopin/",
-                // "staff", "--plot", "/home/anselm/Downloads/KernSheet/beethoven/piano/sonata/sonata01-4"
-            ]
-        },
-        {
             "name": "GrandPiano",
             "type": "debugpy",
             "request": "launch",
@@ -46,7 +35,7 @@
                 // "-n", "heavy", "predict", "--use-beam", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
                 // "-n", "heavy", "predict", "--use-full", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/maj2_up_m-51-56.jpg"
                 // "-n", "serious", "random-check", "--no-display", "100"
-                "tokenize","/home/anselm/datasets/kern-sheet/beethoven/piano/sonata/sonata01-4.krn"
+                "tokenize","/home/anselm/datasets/kern-sheet/beethoven/piano/sonata/sonata05-2.krn"
                 // "kern-stats", "/home/anselm/Downloads/KernSheet"
             ]
         }

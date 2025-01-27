@@ -45,10 +45,12 @@ class KernReader:
     def has_bar_zero(self):
         return 0 in self.bars
 
-    def get_text(self, barno: int, count: int = 10) -> Optional[List[str]]:
-        pos = self.bars.get(barno, -1)
-        if pos >= 0:
-            return self.lines[pos:pos+count]
+    def get_text(self, barno: int) -> Optional[List[str]]:
+        bos = self.bars.get(barno, -1)
+        if bos >= 0:
+            # Includes the marker for the next bar, feels more comfortable.
+            eos = self.bars.get(barno + 1, -1) + 1
+            return self.lines[bos:eos] if eos > 0 else self.lines[bos:]
         else:
             return None
 
@@ -400,7 +402,7 @@ class Staffer:
     ) -> MatLike:
         BLUE = (255, 0, 0)
         RED = (0, 0, 255)
-        GREEN = (0, 255, 0)
+        GREEN = (2, 7*16+1, 4*16+8)
         style, selected_style = (BLUE, 2), (RED, 4)
         if page.validated:
             style = (GREEN, 2)
@@ -730,7 +732,7 @@ class Staffer:
                 for i in range(0, state.selected_staff):
                     barno += len(state.page.staves[i].bars) - 1
                 barno += state.selected_bar
-                # Clears te terminal and displays the kern tokens:
+                # Clears the terminal and displays the kern tokens:
                 print('\033[2J', end='')
                 print('\033[H', end='')
                 records = kern.get_text(barno)
@@ -757,6 +759,9 @@ class Staffer:
                 print(f"{self.key} cleaned-up.")
                 return True
             elif key == ord('t'):
+                # Clears the terminal and displays the kern tokens:
+                print('\033[2J', end='')
+                print('\033[H', end='')
                 print(f"Header for {self.kern_path} - {kern.bar_count} bars")
                 for line in kern.header():
                     print(line)
@@ -801,9 +806,15 @@ Click   Adds a bar to the staff under the mouse click.
                 print(f"Key: {key}")
 
     def is_validated(self) -> bool:
-        if not self.load_if_exists():
-            return False
-        for _, page in self.staff():
-            if not page.validated:
-                return False
-        return True
+        # TODO This duplicates load_if_exists() in a nasty way.
+        if self.json_path.exists():
+            with open(self.json_path, "r") as fp:
+                obj = json.load(fp)
+            pages = [Staffer.Page.from_dict(s) for s in obj['pages']]
+            assert obj['pdf_path'] == self.key, f"Expecting key {
+                self.key} to match .json pdf path {obj['pdf_path']}."
+            for page in pages:
+                if not page.validated:
+                    return False
+            return True
+        return False
