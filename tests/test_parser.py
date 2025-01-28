@@ -231,8 +231,14 @@ class TestHumdrumParser(unittest.TestCase):
         ))
 
     def test_bar_number(self):
-        self.parse_one_token("= 7 \n", Bar("= 7", 7))
-        self.parse_one_token("==\n", Bar("==", barno=-1, is_final=True))
+        self.parse_one_token("= 7 \n", Bar(
+            "= 7", 7,
+            False, False, False, False))
+        self.parse_one_token("==\n", Bar(
+            "==", barno=-1,
+            is_final=True,
+            is_invisible=False,
+            is_repeat_start=False, is_repeat_end=False))
 
 
 if __name__ == '__main__':
