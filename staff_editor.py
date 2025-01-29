@@ -1,5 +1,6 @@
+import logging
 from dataclasses import replace
-from typing import Any, List, Tuple
+from typing import Any, Callable, List, Tuple
 
 import cv2
 import numpy as np
@@ -7,6 +8,17 @@ from cv2.typing import MatLike
 
 from kern.kern_reader import KernReader
 from staffer import Staffer
+
+
+class Action:
+    key_code: int
+    func: Callable[[], None]
+    help: str
+
+    def __init__(self, key: int | str, func: Callable[[], None], help: str):
+        self.key_code = key if type(key) is int else ord(str(key))
+        self.func = func
+        self.help = help
 
 
 class StaffEditor:
@@ -20,6 +32,7 @@ class StaffEditor:
 
     # Editor's config
     max_height: int
+    actions: dict[int, Action]
 
     # Current state of the editor.
     position: int = 0
@@ -68,6 +81,7 @@ class StaffEditor:
         elif len(self.page.staves[0].bars) <= 0:
             self.bar_position = -1
         cv2.namedWindow(self.STAFFER_WINDOW)
+        self.init_commands()
 
     def draw_page(
         self, image: MatLike, page: Staffer.Page, bar_offset: int,
@@ -300,7 +314,7 @@ class StaffEditor:
             self.scale_ratio = 1.0
         cv2.imshow(self.STAFFER_WINDOW, image)
 
-    def edit(self, max_height: int = 992) -> bool:
+    def edit(self) -> bool:
         """Edits the staff.
 
         Args:
@@ -320,26 +334,14 @@ class StaffEditor:
             self.update_ui(bar_offset)
 
             key = cv2.waitKey()
+
+            if self.run_command(key):
+                continue
+
             if key == ord('q'):         # Quits editing.
                 return False
-            elif key == ord('s'):
-                # Marks all pages as reviewed before saving.
-                self.staffer.save(tuple(page for _, page in self.data))
-                print(f"{len(self.data)} pages reviewed and saved.")
-            elif key == ord('a'):
-                self.add_bar()
-            elif key == ord('w'):
-                self.add_staff()
-            elif key == ord('x'):
-                self.delete_selected_staff()
-            elif key == ord('d'):
-                self.delete_selected_bar()
             elif key == ord('n'):   # Moves onto the next document if any.
                 return True
-            elif key == ord(' '):
-                self.next()
-            elif key == ord('p'):
-                self.prev()
             elif key == ord('i'):
                 self.replace_staff(
                     lh_bot=self.staff.lh_bot - 2,
@@ -376,14 +378,6 @@ class StaffEditor:
                 self.move_bar(2)
             elif key == ord('v'):
                 self.replace_page(validated=not self.page.validated)
-            elif key == 84:     # Key down
-                self.select_next_staff()
-            elif key == 82:     # Key up
-                self.select_prev_staff()
-            elif key == 83:     # Key left
-                self.select_next_bar()
-            elif key == 81:     # Key right
-                self.select_prev_bar()
             elif key == ord('1'):
                 self.staffer.unlink_pdf()
                 print(f"{self.staffer.key} cleaned-up.")
@@ -408,7 +402,7 @@ class StaffEditor:
                     self.replace_staff(bars=self.staffer.find_bars(image))
             elif key == ord('h') or key == ord('?'):
                 print("""
-'s'     Save changes.                      
+'s'     Save changes.
 'q'     Quit editor without saving.
 '1'     Invalidate .pdf file by deleting it.
 '2'     Rotates the image by 1 degree.
@@ -435,3 +429,75 @@ Click   Adds a bar to the staff under the mouse click.
                     """)
             else:
                 print(f"Key: {key}")
+
+    def save(self):
+        self.staffer.save(tuple(page for _, page in self.data))
+        print(f"{len(self.data)} pages reviewed and saved.")
+
+    def register_actions(self, *actions: Action):
+        for a in actions:
+            self.actions[a.key_code] = a
+
+    KEY_NAMES = {
+        81: "Left",
+        82: "Up",
+        83: "Right",
+        84: "Down",
+    }
+
+    def help(self):
+        def key_name(key_code: int) -> str:
+            if (name := self.KEY_NAMES.get(key_code, None)):
+                return name
+            elif 32 <= key_code < 127:
+                return f"'{chr(key_code)}'"
+            else:
+                return "???"
+
+        for key_code, action in self.actions.items():
+            print(f"{key_name(key_code):<8}{action.help}")
+
+    def init_commands(self):
+        self.actions = {}
+        self.register_actions(
+            Action('s', self.save,
+                   "Saves works to disk."),
+            Action('a', self.add_bar,
+                   "Adds a bar after the one currently selected."),
+            Action('w', self.add_staff,
+                   "adds a pair of staves after the one currently selected."),
+            Action('x', self.delete_selected_staff,
+                   "Deletes the staff currently selected."),
+            Action('d', self.delete_selected_bar,
+                   "Deletes the bar currently selected."),
+            Action(' ', self.next,
+                   "Moves to next page."),
+            Action('p', self.prev,
+                   "Moves to previous page."),
+
+            Action(81, self.select_prev_bar,
+                   "Moves to and selects previous bar."),
+            Action(83, self.select_next_bar,
+                   "Moves to and selects next bar."),
+            Action(84, self.select_next_staff,
+                   "Moves to and selects next pair of staves."),
+            Action(82, self.select_prev_staff,
+                   "Moves to and selects previous pairs of staves."),
+            Action('h', self.help,
+                   "Displays this help text."),
+            Action('?', self.help,
+                   "Displays this help text."),
+
+
+
+        )
+
+    def run_command(self, key_code) -> bool:
+        action = self.actions.get(key_code, None)
+        if action:
+            try:
+                action.func()
+            except Exception as e:
+                logging.exception(f"Command {chr(key_code)} failed:\n{e}", e)
+            return True
+        return False
