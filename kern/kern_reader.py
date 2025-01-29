@@ -8,7 +8,7 @@ class KernReader:
     """Parses a kern file for bars, and create a bar number to record index.
     """
     lines: list[str]
-    bars: dict[int, int] = {}
+    bars: dict[int, int]
 
     @property
     def bar_count(self) -> int:
@@ -17,6 +17,7 @@ class KernReader:
     def __init__(self, path: Path):
         super().__init__()
         self.path = path
+        self.bars = dict()
         self.load_tokens()
 
     BAR_RE = re.compile(r'^=+\s*(\d+)?.*$')
