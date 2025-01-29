@@ -6,8 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, TextIO, Tuple, Type, Uni
 
 import click
 
-from kern.parser import Parser
-from kern.typing import (
+from kern import (
     Bar,
     Chord,
     Clef,
@@ -17,6 +16,7 @@ from kern.typing import (
     Key,
     Meter,
     Note,
+    Parser,
     Pitch,
     Rest,
     SpinePath,

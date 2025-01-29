@@ -28,6 +28,7 @@ import click
 
 from imslp import IMSLP
 from make_kernsheet import make_kern_sheet, merge_asap
+from staff_editor import StaffEditor
 from staffer import Staffer
 from utils import path_substract
 
@@ -199,14 +200,15 @@ class KernSheet:
                         f"\timslp_url: {entry.imslp_url}\n"
                         f"\tpdf_urls: {entry.pdf_urls}\n"
                     )
-                    if not staffer.edit():
+                    editor = StaffEditor(staffer)
+                    if not editor.edit():
                         break
         else:
             # Edits the given entry.
             staffer = Staffer(
                 self.datadir, key, do_plot=do_plot, no_cache=no_cache
             )
-            staffer.edit()
+            StaffEditor(staffer).edit()
 
 
 @click.command()
