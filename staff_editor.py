@@ -325,8 +325,14 @@ class StaffEditor:
             self.bar_position = 0
 
     def check_bar_count(self):
-        if self.get_bar_offset() == self.kern.bar_count:
+        bar_count = self.get_bar_offset()
+        if not self.kern.has_bar_zero():
+            bar_count -= 1
+        if bar_count == self.kern.bar_count:
             self.beep()
+            print("Bar count matches, victory !")
+        else:
+            print("Bar count mismtach, more work!")
 
     def update_ui(self):
         image = self.draw_page(
