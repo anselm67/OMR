@@ -173,12 +173,19 @@ class StaffEditor:
             )
         return rgb_image
 
-    def update_bar_offset(self):
+    def get_bar_offset(self, position: int = -1) -> int:
+        if position < 0:
+            position = len(self.data)
         bar_number = 0
-        for _, page in self.data[:self.position]:
+        for _, page in self.data[:position]:
             for staff in page.staves:
                 bar_number += len(staff.bars) - 1
-        self.bar_offset = bar_number
+        if not self.kern.has_bar_zero():
+            bar_number += 1
+        return bar_number
+
+    def update_bar_offset(self):
+        self.bar_offset = self.get_bar_offset(self.position)
 
     def get(self) -> Tuple[MatLike, 'Staffer.Page']:
         return self.image, self.page
@@ -297,12 +304,14 @@ class StaffEditor:
         bars = sorted(bars)
         self.replace_staff(bars=bars)
         self.bar_position = bars.index(offset)
+        self.check_bar_count()
 
     def delete_selected_bar(self):
         if self.bar_position < 0:
             return
         del self.page.staves[self.staff_position].bars[self.bar_position]
         self.bar_position = max(0, self.bar_position - 1)
+        self.check_bar_count()
 
     def delete_selected_staff(self):
         if self.staff_position < 0:
@@ -314,6 +323,10 @@ class StaffEditor:
         else:
             self.staff_position = max(0, self.staff_position - 1)
             self.bar_position = 0
+
+    def check_bar_count(self):
+        if self.get_bar_offset() == self.kern.bar_count:
+            self.beep()
 
     def update_ui(self):
         image = self.draw_page(
@@ -392,6 +405,9 @@ class StaffEditor:
         # Clears the terminal and displays the kern tokens:
         print('\033[2J', end='')
         print('\033[H', end='')
+
+    def beep(self):
+        print("\a", end="", flush=True)
 
     def print_kerns(self):
         self.clear()
@@ -493,7 +509,10 @@ class StaffEditor:
                    "Prints misc. infos about the score being edited."),
 
             Action('f', self.toggle_fast_mode,
-                   "Toggles fast mode: automatic save and valid on page jumps.")
+                   "Toggles fast mode: automatic save and valid on page jumps."),
+
+            Action('/', self.check_bar_count,
+                   "Checks bar count")
         )
 
     def run_command(self, key_code) -> bool:
