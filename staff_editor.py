@@ -33,11 +33,13 @@ class StaffEditor:
     # Editor's config
     max_height: int
     actions: dict[int, Action]
+    fast_mode: bool
 
     # Current state of the editor.
     position: int = 0
     staff_position: int = 0
     bar_position: int = 0
+    bar_offset: int = 0
     scale_ratio: float = 1.0
 
     @property
@@ -67,6 +69,13 @@ class StaffEditor:
         bars[self.bar_position] += delta
         self.replace_staff(bars=bars)
 
+    @property
+    def bar_number(self) -> int:
+        bar_number = self.bar_offset
+        for i in range(0, self.staff_position):
+            bar_number += len(self.page.staves[i].bars) - 1
+        return bar_number + self.bar_position
+
     def __init__(self, staffer: Staffer, max_height: int = 992):
         self.staffer = staffer
         self.data = list(staffer.staff())
@@ -75,11 +84,13 @@ class StaffEditor:
         self.position = 0
         self.staff_position = 0
         self.bar_position = 0
+        self.fast_mode = False
         if len(self.page.staves) <= 0:
             self.staff_position = -1
             self.bar_position = -1
         elif len(self.page.staves[0].bars) <= 0:
             self.bar_position = -1
+        self.update_bar_offset()
         cv2.namedWindow(self.STAFFER_WINDOW)
         self.init_commands()
 
@@ -162,12 +173,12 @@ class StaffEditor:
             )
         return rgb_image
 
-    def get_bar_offset(self) -> int:
-        barno = 0
+    def update_bar_offset(self):
+        bar_number = 0
         for _, page in self.data[:self.position]:
             for staff in page.staves:
-                barno += len(staff.bars) - 1
-        return barno
+                bar_number += len(staff.bars) - 1
+        self.bar_offset = bar_number
 
     def get(self) -> Tuple[MatLike, 'Staffer.Page']:
         return self.image, self.page
@@ -176,6 +187,9 @@ class StaffEditor:
         if self.position + 1 >= len(self.data):
             print("End of score.")
             return
+        if self.fast_mode:
+            self.replace_page(validated=True)
+            self.save()
         self.position += 1
         self.staff_position = 0
         if len(self.page.staves) == 0:
@@ -301,9 +315,9 @@ class StaffEditor:
             self.staff_position = max(0, self.staff_position - 1)
             self.bar_position = 0
 
-    def update_ui(self, bar_offset):
+    def update_ui(self):
         image = self.draw_page(
-            self.image, self.page, bar_offset, self.staff_position, self.bar_position
+            self.image, self.page, self.bar_offset, self.staff_position, self.bar_position
         )
         height, width = image.shape[:2]
         if self.max_height > 0 and height > self.max_height:
@@ -314,7 +328,7 @@ class StaffEditor:
             self.scale_ratio = 1.0
         cv2.imshow(self.STAFFER_WINDOW, image)
 
-    def edit(self) -> bool:
+    def edit(self, fast_mode: bool = False) -> bool:
         """Edits the staff.
 
         Args:
@@ -325,13 +339,12 @@ class StaffEditor:
                 False otherwise.
         """
 
+        self.fast_mode = fast_mode
+
         while True:
 
-            bar_offset = self.get_bar_offset()
-            if not self.kern.has_bar_zero():
-                bar_offset += 1
-
-            self.update_ui(bar_offset)
+            self.update_bar_offset()
+            self.update_ui()
 
             key = cv2.waitKey()
 
@@ -341,102 +354,20 @@ class StaffEditor:
             if key == ord('q'):         # Quits editing.
                 return False
             elif key == ord('n'):   # Moves onto the next document if any.
+                if self.fast_mode:
+                    self.replace_page(validated=True)
+                    self.save()
                 return True
-            elif key == ord('i'):
-                self.replace_staff(
-                    lh_bot=self.staff.lh_bot - 2,
-                    rh_top=self.staff.rh_top - 2,
-                )
-            elif key == ord('m'):
-                self.replace_staff(
-                    lh_bot=self.staff.lh_bot + 2,
-                    rh_top=self.staff.rh_top + 2,
-                )
-            elif key == ord('e'):   # Extends staff height.
-                self.replace_staff(lh_bot=self.staff.lh_bot + 1)
-            elif key == ord('r'):   # Reduces staff height.
-                self.replace_staff(lh_bot=self.staff.lh_bot - 1)
-            elif key == ord('j'):    # Moves selected bar left.
-                self.move_bar(-2)
-            elif key == ord('k'):
-                # Show kerns matching this bar.
-                barno = bar_offset
-                for i in range(0, self.staff_position):
-                    barno += len(self.page.staves[i].bars) - 1
-                barno += self.bar_position
-                # Clears the terminal and displays the kern tokens:
-                print('\033[2J', end='')
-                print('\033[H', end='')
-                records = self.kern.get_text(barno)
-                if records is None:
-                    print(f"No records found for bar {barno}")
-                else:
-                    print(f"Bar {barno} / {self.kern.bar_count}:")
-                    for record in records:
-                        print(record)
-            elif key == ord('l'):    # Moves selected bar right.
-                self.move_bar(2)
-            elif key == ord('v'):
-                self.replace_page(validated=not self.page.validated)
             elif key == ord('1'):
                 self.staffer.unlink_pdf()
                 print(f"{self.staffer.key} cleaned-up.")
                 return True
-            elif key == ord('t'):
-                # Clears the terminal and displays the kern tokens:
-                print('\033[2J', end='')
-                print('\033[H', end='')
-                print(f"Header for {
-                      self.staffer.kern_path} - {self.kern.bar_count} bars")
-                for line in self.kern.header():
-                    print(line)
-            elif key == ord('c'):
-                # Recomputes the bars of the selected staff
-                if self.staff_position >= 0:
-                    staff = self.page.staves[self.staff_position]
-                    image = self.image[staff.rh_top:staff.lh_bot, :].copy()
-                    image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-                    image = cv2.bitwise_not(image)
-                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
-                    image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
-                    self.replace_staff(bars=self.staffer.find_bars(image))
-            elif key == ord('h') or key == ord('?'):
-                print("""
-'s'     Save changes.
-'q'     Quit editor without saving.
-'1'     Invalidate .pdf file by deleting it.
-'2'     Rotates the image by 1 degree.
-'n'     Next page of current score.
-'p'     Previous page of current score.
-'w'     Adds a staff below the selected one.
-'x'     Deletes the selected staff.
-'c'     Recomputes the bars of the slected staff.
-'b'     Adds a bar to the selected staff.
-'d'     Deletes the selected bar.
-'i/I'   Moves selected staff up, fast & slow.
-'j/J'   Moves selected staff down, fast & slow.
-'e'     Extends the staff by lowering the right hand bottom.
-'r'     Shrinks the staff by raising the right hand bottom.
-'l'/'L' Moves selected bar left, fast & slow.
-'j'/'J' Moves selected bar right, fast & slow.
-'m'     Toggles on/off current page as reviewed.
-Up      Selects staff above.
-Down    Selects staff below.
-Right   Selects staff below.
-Left    Selects staff below.
-Click   Adds a bar to the staff under the mouse click.
-'h','?' This help.
-                    """)
             else:
-                print(f"Key: {key}")
+                print(f"Unknown key: '{key}', press 'h' for help.")
 
     def save(self):
         self.staffer.save(tuple(page for _, page in self.data))
         print(f"{len(self.data)} pages reviewed and saved.")
-
-    def register_actions(self, *actions: Action):
-        for a in actions:
-            self.actions[a.key_code] = a
 
     KEY_NAMES = {
         81: "Left",
@@ -457,6 +388,50 @@ Click   Adds a bar to the staff under the mouse click.
         for key_code, action in self.actions.items():
             print(f"{key_name(key_code):<8}{action.help}")
 
+    def clear(self):
+        # Clears the terminal and displays the kern tokens:
+        print('\033[2J', end='')
+        print('\033[H', end='')
+
+    def print_kerns(self):
+        self.clear()
+        bar_number = self.bar_number
+        records = self.kern.get_text(bar_number)
+        if records is None:
+            print(f"No records found for bar {bar_number}")
+        else:
+            print(f"Bar {bar_number} / {self.kern.bar_count}:")
+            for record in records:
+                print(record)
+
+    def title(self):
+        self.clear()
+        print("Fast move on!" if self.fast_mode else "Fast mode off.")
+        print(f"Header for {
+            self.staffer.kern_path} - {self.kern.bar_count} bars")
+        for line in self.kern.header():
+            print(line)
+
+    def recompute_bars(self):
+        if self.staff_position >= 0:
+            staff = self.page.staves[self.staff_position]
+            image = self.image[staff.rh_top:staff.lh_bot, :].copy()
+            image = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
+            image = cv2.bitwise_not(image)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 5))
+            image = cv2.morphologyEx(image, cv2.MORPH_CLOSE, kernel)
+            self.replace_staff(bars=self.staffer.find_bars(image))
+
+    def toggle_fast_mode(self):
+        self.fast_mode = not self.fast_mode
+        print("Fast move on!" if self.fast_mode else "Fast mode off.")
+
+    def register_actions(self, *actions: Action):
+        for a in actions:
+            assert self.actions.get(a.key_code) is None, \
+                f"Action for {a.key_code} already defined."
+            self.actions[a.key_code] = a
+
     def init_commands(self):
         self.actions = {}
         self.register_actions(
@@ -475,6 +450,29 @@ Click   Adds a bar to the staff under the mouse click.
             Action('p', self.prev,
                    "Moves to previous page."),
 
+            Action('j', lambda: self.move_bar(-2),
+                   "Moves the selected bar left."),
+            Action('l', lambda: self.move_bar(2),
+                   "Moves the selected bar right."),
+            Action('e', lambda: self.replace_staff(lh_bot=self.staff.lh_bot + 1),
+                   "Extends the selected staff down."),
+            Action('r', lambda: self.replace_staff(lh_bot=self.staff.lh_bot - 1),
+                   "Shrinks the selected staff up."),
+            Action('i', lambda: self.replace_staff(
+                lh_bot=self.staff.lh_bot - 2,
+                rh_top=self.staff.rh_top - 2,
+            ), "Moves the selected staff up."),
+            Action('m', lambda: self.replace_staff(
+                lh_bot=self.staff.lh_bot + 2,
+                rh_top=self.staff.rh_top + 2,
+            ), "Moves the selected staff down."),
+
+            Action('c', self.recompute_bars,
+                   "Recomputes the bars within the selected staves."),
+
+            Action('v', lambda: self.replace_page(validated=not self.page.validated),
+                   "Toggles the current page validation flag on or off."),
+
             Action(81, self.select_prev_bar,
                    "Moves to and selects previous bar."),
             Action(83, self.select_next_bar,
@@ -489,7 +487,13 @@ Click   Adds a bar to the staff under the mouse click.
                    "Displays this help text."),
 
 
+            Action('k', self.print_kerns,
+                   "Prints the kern tokens for the selected bar."),
+            Action('t', self.title,
+                   "Prints misc. infos about the score being edited."),
 
+            Action('f', self.toggle_fast_mode,
+                   "Toggles fast mode: automatic save and valid on page jumps.")
         )
 
     def run_command(self, key_code) -> bool:

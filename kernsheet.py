@@ -184,6 +184,7 @@ class KernSheet:
         self,
         key: Optional[str] = None,
         all: bool = True,
+        fast_mode: bool = False,
         no_cache: bool = False, do_plot: bool = False
     ):
         if key is None:
@@ -201,14 +202,14 @@ class KernSheet:
                         f"\tpdf_urls: {entry.pdf_urls}\n"
                     )
                     editor = StaffEditor(staffer)
-                    if not editor.edit():
+                    if not editor.edit(fast_mode):
                         break
         else:
             # Edits the given entry.
             staffer = Staffer(
                 self.datadir, key, do_plot=do_plot, no_cache=no_cache
             )
-            StaffEditor(staffer).edit()
+            StaffEditor(staffer).edit(fast_mode)
 
 
 @click.command()
@@ -226,10 +227,13 @@ def fix_imslp(ctx):
               help="Don't use cached versions of the pdf & staff.")
 @click.option("--do-plot", "do_plot", is_flag=True, default=False,
               help="Don't use cached versions of the pdf & staff.")
+@click.option("--fast-mode", "fast_mode", is_flag=True, default=False,
+              help="Turns fast mode on automatically for al scores.")
 @click.pass_context
-def edit(ctx, kern_path: Optional[str], all: bool, no_cache: bool, do_plot: bool):
+def edit(ctx, kern_path: Optional[str], all: bool, no_cache: bool, do_plot: bool, fast_mode: bool):
     kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.edit(kern_path, all=all, no_cache=no_cache, do_plot=do_plot)
+    kern_sheet.edit(kern_path, all=all, no_cache=no_cache,
+                    do_plot=do_plot, fast_mode=fast_mode)
 
 
 @click.command()
