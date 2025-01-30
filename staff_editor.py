@@ -326,6 +326,8 @@ class StaffEditor:
 
     def check_bar_count(self):
         bar_count = self.get_bar_offset() - (self.kern.first_bar - 1)
+        if self.kern.has_bar_zero():
+            bar_count += 1
         print(f"last-offset={self.get_bar_offset()}, {
               bar_count=}, {self.kern.bar_count=}")
         if bar_count == self.kern.bar_count:
