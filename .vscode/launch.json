@@ -15,8 +15,8 @@
                 // "cleanup-pdf"
                 // "do"
                 // "update",
-                "edit", "--fast-mode"
-                // "edit", "bach/inventions/inven01"
+                // "edit", "--fast-mode"
+                "edit", "beethoven/piano/variations/swiss-1"
             ]
         },
         {

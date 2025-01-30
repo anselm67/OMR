@@ -9,6 +9,7 @@ class KernReader:
     """
     lines: list[str]
     bars: dict[int, int]
+    first_bar: int
 
     @property
     def bar_count(self) -> int:
@@ -18,6 +19,7 @@ class KernReader:
         super().__init__()
         self.path = path
         self.bars = dict()
+        self.first_bar = -1
         self.load_tokens()
 
     BAR_RE = re.compile(r'^=+\s*(\d+)?.*$')
@@ -30,13 +32,18 @@ class KernReader:
             line = self.lines[lineno]
             if (m := self.BAR_RE.match(line)):
                 if m.group(1) is not None:
-                    self.bars[int(m.group(1))] = lineno
+                    bar_number = int(m.group(1))
+                    if bar_number > 0 and self.first_bar < 0:
+                        self.first_bar = bar_number
+                    self.bars[bar_number] = lineno
         logging.info(f"{len(self.bars) - 1} bars in {self.path}")
 
     def has_bar_zero(self):
         return 0 in self.bars
 
     def get_text(self, barno: int) -> Optional[list[str]]:
+        if barno < self.first_bar:
+            barno = 0
         bos = self.bars.get(barno, -1)
         if bos >= 0:
             # Includes the marker for the next bar, feels more comfortable.

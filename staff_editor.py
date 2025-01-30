@@ -182,7 +182,7 @@ class StaffEditor:
                 bar_number += len(staff.bars) - 1
         if not self.kern.has_bar_zero():
             bar_number += 1
-        return bar_number
+        return bar_number + (self.kern.first_bar - 1)
 
     def update_bar_offset(self):
         self.bar_offset = self.get_bar_offset(self.position)
