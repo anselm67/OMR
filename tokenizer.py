@@ -217,7 +217,7 @@ class NormHandler(BaseHandler):
             if self.bar_number <= 2:
                 if all([bar.barno < 0 and bar.requires_valid_bar_number() for bar in bars]):
                     self.bar_numbering = True
-                elif any([bar.requires_valid_bar_number() for bar in bars]):
+                elif any([bar.requires_valid_bar_number() for bar in bars if bar.barno < 0]):
                     self.bar_number += 1
                 self.bar_zero = True
 
