@@ -149,7 +149,7 @@ class BaseHandler(Parser[Spine].Handler):
         self.spines.remove(spine)
 
     def branch_spine(self, source: Spine) -> Spine:
-        branch = Spine()
+        branch = type(source)()
         self.spines.insert(self.position(source), branch)
         return branch
 
@@ -202,8 +202,8 @@ class NormHandler(BaseHandler):
 
     def fix_bar(self, tokens: List[Tuple[Spine, Token]]) -> bool:
         # If we see a note or chord before any bar, emit a fake bar 0.
-        if any([isinstance(t, (Note, Chord, Rest)) for _, t in tokens]):
-            if not self.bar_zero:
+        if not self.bar_zero:
+            if any([isinstance(t, (Note, Chord, Rest)) for _, t in tokens]):
                 bar = Bar("*fake*", 0, False, False, False, False)
                 if self.output:
                     self.output.write('\t'.join([
