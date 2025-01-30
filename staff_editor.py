@@ -32,6 +32,7 @@ class StaffEditor:
 
     # Editor's config
     max_height: int
+    max_width: int
     actions: dict[int, Action]
     fast_mode: bool
 
@@ -76,11 +77,12 @@ class StaffEditor:
             bar_number += len(self.page.staves[i].bars) - 1
         return bar_number + self.bar_position
 
-    def __init__(self, staffer: Staffer, max_height: int = 992):
+    def __init__(self, staffer: Staffer, max_height: int = 992, max_width=780):
         self.staffer = staffer
         self.data = list(staffer.staff())
         self.kern = KernReader(self.staffer.kern_path)
         self.max_height = max_height
+        self.max_width = max_width
         self.position = 0
         self.staff_position = 0
         self.bar_position = 0
@@ -334,24 +336,53 @@ class StaffEditor:
         else:
             print("Bar count mismtach, more work!")
 
+    def fix_side_bars(self):
+        # Finds the left and right bars.
+        min_offset, max_offset = self.image.shape[1], 0
+        for staff in self.page.staves:
+            for bar in staff.bars:
+                min_offset = min(min_offset, bar)
+                max_offset = max(max_offset, bar)
+        if min_offset == self.image.shape[1] or max_offset == 0:
+            print("No left and right side defined,not doing anything.")
+            return
+        # Ensure that each staff has them both within margin.
+        margin = 25
+        for idx, staff in enumerate(self.page.staves):
+            bars = None
+            if len(staff.bars) > 0:
+                if abs(staff.bars[0] - min_offset) >= margin:
+                    if bars is None:
+                        bars = staff.bars.copy()
+                    bars.insert(0, min_offset)
+                if abs(staff.bars[-1] - max_offset) >= margin:
+                    if bars is None:
+                        bars = staff.bars.copy()
+                    bars.append(max_offset)
+            else:
+                bars = [min_offset, max_offset]
+            if bars is not None:
+                print(f"Fixed staff {idx + 1}")
+                self.page.staves[idx] = replace(staff, bars=bars)
+
     def update_ui(self):
         image = self.draw_page(
             self.image, self.page, self.bar_offset, self.staff_position, self.bar_position
         )
         height, width = image.shape[:2]
+        self.scale_ratio = 1.0
         if self.max_height > 0 and height > self.max_height:
-            self.scale_ratio = height / self.max_height
-            new_width = int(self.max_height * width / height)
-            image = cv2.resize(image, (new_width, self.max_height))
-        else:
-            self.scale_ratio = 1.0
+            self.scale_ratio = self.max_height / height
+        if self.max_width > 0 and width > self.max_width:
+            self.scale_ratio = min(self.scale_ratio, self.max_width / width)
+        if self.scale_ratio != 1.0:
+            new_height = int(self.scale_ratio * height)
+            new_width = int(self.scale_ratio * width)
+            image = cv2.resize(image, (new_width, new_height))
         cv2.imshow(self.STAFFER_WINDOW, image)
 
     def edit(self, fast_mode: bool = False) -> bool:
         """Edits the staff.
-
-        Args:
-            max_height (int, optional): The requested editor height. Defaults to 992.
 
         Returns:
             bool: True if the user wishes to continue editing further documents,
@@ -518,7 +549,9 @@ class StaffEditor:
                    "Toggles fast mode: automatic save and valid on page jumps."),
 
             Action('/', self.check_bar_count,
-                   "Checks bar count")
+                   "Checks bar count"),
+            Action('z', self.fix_side_bars,
+                   "Ensures this staff has both left and right sides.")
         )
 
     def run_command(self, key_code) -> bool:
