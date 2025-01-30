@@ -31,8 +31,7 @@ class StaffEditor:
     kern: KernReader
 
     # Editor's config
-    max_height: int
-    max_width: int
+    max_size: tuple[int, int]
     actions: dict[int, Action]
     fast_mode: bool
 
@@ -77,12 +76,11 @@ class StaffEditor:
             bar_number += len(self.page.staves[i].bars) - 1
         return bar_number + self.bar_position
 
-    def __init__(self, staffer: Staffer, max_height: int = 992, max_width=780):
+    def __init__(self, staffer: Staffer, max_size: tuple[int, int] = (992, 780)):
         self.staffer = staffer
         self.data = list(staffer.staff())
         self.kern = KernReader(self.staffer.kern_path)
-        self.max_height = max_height
-        self.max_width = max_width
+        self.max_size = max_size
         self.position = 0
         self.staff_position = 0
         self.bar_position = 0
@@ -370,15 +368,18 @@ class StaffEditor:
             self.image, self.page, self.bar_offset, self.staff_position, self.bar_position
         )
         height, width = image.shape[:2]
+        max_height, max_width = self.max_size
         self.scale_ratio = 1.0
-        if self.max_height > 0 and height > self.max_height:
-            self.scale_ratio = self.max_height / height
-        if self.max_width > 0 and width > self.max_width:
-            self.scale_ratio = min(self.scale_ratio, self.max_width / width)
+        if max_height > 0 and height > max_height:
+            self.scale_ratio = max_height / height
+        if max_width > 0 and width > max_width:
+            self.scale_ratio = min(self.scale_ratio, max_width / width)
         if self.scale_ratio != 1.0:
-            new_height = int(self.scale_ratio * height)
-            new_width = int(self.scale_ratio * width)
-            image = cv2.resize(image, (new_width, new_height))
+            new_size = (
+                int(self.scale_ratio * width),
+                int(self.scale_ratio * height)
+            )
+            image = cv2.resize(image, new_size)
         cv2.imshow(self.STAFFER_WINDOW, image)
 
     def edit(self, fast_mode: bool = False) -> bool:
