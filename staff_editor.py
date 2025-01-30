@@ -176,12 +176,10 @@ class StaffEditor:
     def get_bar_offset(self, position: int = -1) -> int:
         if position < 0:
             position = len(self.data)
-        bar_number = 0
+        bar_number = 0 if self.kern.has_bar_zero() else 1
         for _, page in self.data[:position]:
             for staff in page.staves:
                 bar_number += len(staff.bars) - 1
-        if not self.kern.has_bar_zero():
-            bar_number += 1
         return bar_number + (self.kern.first_bar - 1)
 
     def update_bar_offset(self):
@@ -214,11 +212,13 @@ class StaffEditor:
         staff_count = len(self.page.staves)
         if staff_count == 0:
             self.staff_position = -1
+            bars_len = 0
         elif select_last:
             self.staff_position = staff_count - 1
+            bars_len = len(self.page.staves[self.staff_position].bars)
         else:
             self.staff_position = 0
-        bars_len = len(self.page.staves[self.staff_position].bars)
+            bars_len = len(self.page.staves[self.staff_position].bars)
         if self.staff_position < 0 or bars_len == 0:
             self.bar_position = -1
         else:
@@ -246,7 +246,9 @@ class StaffEditor:
                 self.bar_position = -1
 
     def select_next_bar(self):
-        bar_count = len(self.page.staves[self.staff_position].bars)
+        bar_count = 0
+        if self.staff_position >= 0:
+            bar_count = len(self.page.staves[self.staff_position].bars)
         if self.bar_position + 1 >= bar_count:
             self.select_next_staff()
         else:
@@ -328,8 +330,6 @@ class StaffEditor:
         bar_count = self.get_bar_offset() - (self.kern.first_bar - 1)
         if self.kern.has_bar_zero():
             bar_count += 1
-        print(f"last-offset={self.get_bar_offset()}, {
-              bar_count=}, {self.kern.bar_count=}")
         if bar_count == self.kern.bar_count:
             self.beep()
             print("Bar count matches, victory !")

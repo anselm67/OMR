@@ -222,7 +222,7 @@ class NormHandler(BaseHandler):
             if self.bar_numbering:
                 for bar in bars:
                     bar.barno = self.bar_number
-                    self.bar_number += 1
+                self.bar_number += 1
             elif (barno := max((bar.barno for bar in bars))) >= 0:
                 self.bar_number = barno + 1
             elif any([bar.requires_valid_bar_number() for bar in bars if bar.barno < 0]):
