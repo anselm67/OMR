@@ -225,14 +225,16 @@ class NormHandler(BaseHandler):
                 self.bar_number += 1
             elif (barno := max((bar.barno for bar in bars))) >= 0:
                 self.bar_number = barno + 1
-            elif any([bar.requires_valid_bar_number() for bar in bars if bar.barno < 0]):
+            elif any((bar.requires_valid_bar_number() for bar in bars if bar.barno < 0)):
                 self.bar_number += 1
 
             for bar in bars:
                 if bar.is_final and bar.barno < 0:
                     bar.barno = self.bar_number
+                # TODO We're not supposed to see any more bars, so it's ok
+                # not to incrememt self.bar_number
 
-            return any([bar.barno >= 0 for bar in bars])
+            return any((bar.barno >= 0 for bar in bars))
 
         return True
 
