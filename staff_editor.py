@@ -325,9 +325,9 @@ class StaffEditor:
             self.bar_position = 0
 
     def check_bar_count(self):
-        bar_count = self.get_bar_offset()
-        if not self.kern.has_bar_zero():
-            bar_count -= 1
+        bar_count = self.get_bar_offset() - (self.kern.first_bar - 1)
+        print(f"last-offset={self.get_bar_offset()}, {
+              bar_count=}, {self.kern.bar_count=}")
         if bar_count == self.kern.bar_count:
             self.beep()
             print("Bar count matches, victory !")
@@ -454,7 +454,8 @@ class StaffEditor:
         if records is None:
             print(f"No records found for bar {bar_number}")
         else:
-            print(f"Bar {bar_number} / {self.kern.bar_count}:")
+            print(f"Bar {bar_number} / {self.kern.bar_count +
+                  self.kern.first_bar - 1}:")
             for record in records:
                 print(record)
 
