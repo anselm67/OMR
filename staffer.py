@@ -1,6 +1,8 @@
 
 
 import json
+import logging
+import shutil
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, List, Optional, Tuple
@@ -14,6 +16,16 @@ from scipy.signal import find_peaks
 
 from kernsheet import KernSheet
 
+# Default width for the annotated images.
+# The annnotations are - of course -dependent on that width which is
+# also stored in each Page instance.
+IMAGE_WIDTH = 1200
+
+# Name of the pdf cache directory.
+# All the images for a given pdf may be cached in this child of the
+# directory that contains them.
+PDF_CACHE = ".pdfcache"
+
 
 class Staffer:
     """Finds the layout of a score.
@@ -22,7 +34,6 @@ class Staffer:
         image, ready for training a model, and provides the corrdinates
         of staves on each page of the score.
     """
-    WIDTH = 1200
 
     @dataclass(frozen=True)
     class Staff:
@@ -58,11 +69,19 @@ class Staffer:
     do_plot: bool
     no_cache: bool
 
+    pdf_cache: Optional[Path]
     pdf_path: Path
     json_path: Path
 
     pages: Optional[tuple[Page, ...]]
     data: Optional[tuple[tuple[MatLike, Page], ...]]
+
+    @dataclass
+    class Config:
+        width: int = IMAGE_WIDTH
+        do_plot: bool = False
+        no_cache: bool = False
+        pdf_cache: bool = True
 
     @property
     def kern_path(self) -> Path:
@@ -71,15 +90,16 @@ class Staffer:
     def __init__(
         self, dataset: KernSheet, key: str,
         pdf_path: Path, json_path: Path,
-        width: int = WIDTH, do_plot: bool = False, no_cache: bool = False
+        config: Config
     ):
         self.dataset = dataset
         self.key = key
         self.pdf_path = pdf_path
         self.json_path = json_path
-        self.width = width
-        self.do_plot = do_plot
-        self.no_cache = no_cache
+        self.pdf_cache = pdf_path.parent / PDF_CACHE if config.pdf_cache else None
+        self.width = config.width
+        self.do_plot = config.do_plot
+        self.no_cache = config.no_cache
         self.pages = None
         self.data = None
 
@@ -311,11 +331,34 @@ class Staffer:
 
     def load_images(self):
         assert self.pages is not None
+        # Uses the cache when available.
+        pdf_cache = self.pdf_cache
+        if pdf_cache is not None and pdf_cache.exists():
+            png_files = sorted(
+                list(pdf_cache.glob(f"{self.pdf_path.stem}-*.png")))
+            if len(png_files) == len(self.pages):
+                logging.info(f"Reading pages from cache: {png_files}")
+                self.data = tuple(
+                    (np.array(cv2.imread(png_file.as_posix())), page)
+                    for png_file, page in zip(png_files, self.pages)
+                )
+                return
+            else:
+                # the cache is invalid
+                shutil.rmtree(pdf_cache)
+
+        # Loads and transforms the images, caches them if possible.
         pdf = convert_from_path(self.pdf_path)
         self.data = tuple(
             (self.apply_page_transforms(np.array(image), page), page)
             for image, page in zip(pdf, self.pages)
         )
+        if pdf_cache is not None:
+            logging.info(f"Caching images for {self.pdf_path.name}")
+            for idx, (image, _) in enumerate(self.data):
+                png_file = pdf_cache / f"{self.pdf_path.stem}-{idx:03d}.png"
+                png_file.parent.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(png_file.as_posix(), image)
 
     def save(self, pages: Optional[tuple[Page, ...]] = None):
         if pages is None:

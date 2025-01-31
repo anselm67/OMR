@@ -15,8 +15,8 @@
                 // "cleanup-pdf"
                 // "do"
                 // "update",
-                "edit"
-                // "edit", "bach/fugue/bwv_873/bwv_873"
+                "edit", "--all"
+                // "edit", "bach/inventions/inven01"
             ]
         },
         {

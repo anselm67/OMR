@@ -21,7 +21,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from functools import reduce
 from pathlib import Path
-from typing import Dict, ItemsView, List, Optional, cast
+from typing import Optional, cast
 from urllib.parse import quote
 
 import click
@@ -180,7 +180,7 @@ class KernSheet:
             self.save_catalog()
             time.sleep(20 + random.randint(10, 20))
 
-    def first_score(self, entry: Entry) -> tuple[bool, Optional[Score]]:
+    def first_score(self, key: str, entry: Entry) -> tuple[bool, Optional[Score]]:
         score = next((s for s in entry.scores if s.pdf_path), None)
         if score is None:
             return False, None
@@ -196,7 +196,7 @@ class KernSheet:
                 score.json_path = ""
                 needs_save = True
         if score.pdf_path and not score.json_path:
-            json_path = pdf_path.with_suffix(".json")
+            json_path = self.kern_path(key).with_suffix(".json")
             score.json_path = self.relative(json_path)
             needs_save = True
 
@@ -218,15 +218,14 @@ class KernSheet:
         if key is None:
             # Loops through all samples in need of verification, skips non pdf.
             for key, entry in self.entries.items():
-                dirty, score = self.first_score(entry)
+                dirty, score = self.first_score(key, entry)
                 if score is None:
                     continue
                 pdf_path = self.datadir / score.pdf_path
                 json_path = self.datadir / score.json_path
                 staffer = Staffer(
-                    self, key,
-                    pdf_path, json_path,
-                    do_plot=do_plot, no_cache=no_cache
+                    self, key, pdf_path, json_path, Staffer.Config(
+                        pdf_cache=True)
                 )
                 if all or not staffer.is_validated():
                     print(f"Editing {key} - {pdf_path.name}")
@@ -238,16 +237,14 @@ class KernSheet:
         else:
             # Edits the given entry.
             entry = self.entries[key]
-            dirty, score = self.first_score(entry)
+            dirty, score = self.first_score(key, entry)
             if score is None:
                 print(f"No pdf or json for {entry}")
             else:
                 pdf_path = self.datadir / score.pdf_path
                 json_path = self.datadir / score.json_path
                 staffer = Staffer(
-                    self, key,
-                    pdf_path, json_path,
-                    do_plot=do_plot, no_cache=no_cache
+                    self, key, pdf_path, json_path, Staffer.Config()
                 )
                 StaffEditor(staffer).edit(fast_mode)
             if dirty:
