@@ -334,7 +334,7 @@ class Staffer:
             # Uses the cache when available.
             png_files = sorted(self.pdf_cache.glob(
                 f"{self.pdf_path.stem}-*.png"))
-            if expected_count > 0 and len(png_files) == expected_count:
+            if expected_count < 0 or len(png_files) == expected_count:
                 logging.info(f"Reading pages from cache: {self.pdf_cache}")
                 return tuple(
                     np.array(cv2.imread(png_file.as_posix()))
