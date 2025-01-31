@@ -302,15 +302,15 @@ class Staffer:
         return page
 
     def decode_images(self):
-        pdf = convert_from_path(self.pdf_path)
+        images = self.load_images_from_pdf(-1)
 
         pages = [
-            self.decode_page(np.array(image), pageno) for pageno, image in enumerate(pdf)
+            self.decode_page(np.array(image), pageno) for pageno, image in enumerate(images)
         ]
 
         self.data = tuple(
             (self.apply_page_transforms(np.array(image), page), page)
-            for image, page in zip(pdf, pages)
+            for image, page in zip(images, pages)
         )
 
     # Rescales and rotates the image according to the given page.
@@ -329,36 +329,45 @@ class Staffer:
 
         return image
 
+    def load_images_from_pdf(self, expected_count: int = -1) -> tuple[MatLike, ...]:
+        if self.pdf_cache and self.pdf_cache.exists():
+            # Uses the cache when available.
+            png_files = sorted(self.pdf_cache.glob(
+                f"{self.pdf_path.stem}-*.png"))
+            if expected_count > 0 and len(png_files) == expected_count:
+                logging.info(f"Reading pages from cache: {self.pdf_cache}")
+                return tuple(
+                    np.array(cv2.imread(png_file.as_posix()))
+                    for png_file in png_files
+                )
+            elif expected_count >= 0:
+                # The cache is invalid.
+                logging.info(
+                    f"Invalidating cache for {self.pdf_path}: "
+                    f"got {len(png_files)} instead of {expected_count}"
+                )
+                shutil.rmtree(self.pdf_cache)
+
+        # Extracts images from pdf and caches them.
+        pdf = convert_from_path(self.pdf_path)
+        images = tuple(np.array(image) for image in pdf)
+        if self.pdf_cache:
+            logging.info(f"Caching images for {self.pdf_path.name}")
+            for idx, image in enumerate(images):
+                file = self.pdf_cache / \
+                    f"{self.pdf_path.stem}-{idx:03d}.png"
+                file.parent.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(file.as_posix(), image)
+
+        return images
+
     def load_images(self):
         assert self.pages is not None
-        # Uses the cache when available.
-        pdf_cache = self.pdf_cache
-        if pdf_cache is not None and pdf_cache.exists():
-            png_files = sorted(
-                list(pdf_cache.glob(f"{self.pdf_path.stem}-*.png")))
-            if len(png_files) == len(self.pages):
-                logging.info(f"Reading pages from cache: {png_files}")
-                self.data = tuple(
-                    (np.array(cv2.imread(png_file.as_posix())), page)
-                    for png_file, page in zip(png_files, self.pages)
-                )
-                return
-            else:
-                # the cache is invalid
-                shutil.rmtree(pdf_cache)
-
-        # Loads and transforms the images, caches them if possible.
-        pdf = convert_from_path(self.pdf_path)
+        images = self.load_images_from_pdf(len(self.pages))
         self.data = tuple(
-            (self.apply_page_transforms(np.array(image), page), page)
-            for image, page in zip(pdf, self.pages)
+            (self.apply_page_transforms(image, page), page)
+            for image, page in zip(images, self.pages)
         )
-        if pdf_cache is not None:
-            logging.info(f"Caching images for {self.pdf_path.name}")
-            for idx, (image, _) in enumerate(self.data):
-                png_file = pdf_cache / f"{self.pdf_path.stem}-{idx:03d}.png"
-                png_file.parent.mkdir(parents=True, exist_ok=True)
-                cv2.imwrite(png_file.as_posix(), image)
 
     def save(self, pages: Optional[tuple[Page, ...]] = None):
         if pages is None:
