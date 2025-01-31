@@ -412,6 +412,7 @@ class StaffEditor:
                     self.save()
                 return True
             elif key == ord('1'):
+                # TODO Requires catalog clean-up.
                 self.staffer.unlink_pdf()
                 print(f"{self.staffer.key} cleaned-up.")
                 return True
@@ -427,6 +428,8 @@ class StaffEditor:
         82: "Up",
         83: "Right",
         84: "Down",
+        85: "PageUp",
+        86: "PageDn",
     }
 
     def help(self):
@@ -488,6 +491,14 @@ class StaffEditor:
             assert self.actions.get(a.key_code) is None, \
                 f"Action for {a.key_code} already defined."
             self.actions[a.key_code] = a
+
+    def blank_pages(self, page_range: range):
+        for i in page_range:
+            image, page = self.data[i]
+            self.data[i] = (
+                image,
+                replace(page, validated=True, staves=[])
+            )
 
     def init_commands(self):
         self.actions = {}
@@ -555,7 +566,12 @@ class StaffEditor:
             Action('/', self.check_bar_count,
                    "Checks bar count"),
             Action('z', self.fix_side_bars,
-                   "Ensures this staff has both left and right sides.")
+                   "Ensures this staff has both left and right sides."),
+
+            Action(85, lambda: self.blank_pages(range(0, self.position)),
+                   "Removes all bars from previous pages (current page excluded) and validates them."),
+            Action(86, lambda: self.blank_pages(range(self.position+1, len(self.data))),
+                   "Removes all bars from next pages and (current page excluded) validates them.")
         )
 
     def run_command(self, key_code) -> bool:
