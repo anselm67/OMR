@@ -12,6 +12,8 @@ from cv2.typing import MatLike
 from pdf2image import convert_from_path
 from scipy.signal import find_peaks
 
+from kernsheet import KernSheet
+
 
 class Staffer:
     """Finds the layout of a score.
@@ -50,33 +52,31 @@ class Staffer:
                 staves=[Staffer.Staff(**x) for x in obj["staves"]]
             )
 
-    datadir: Path
+    dataset: KernSheet
     key: str
     width: int
     do_plot: bool
     no_cache: bool
 
+    pdf_path: Path
+    json_path: Path
+
     pages: Optional[tuple[Page, ...]]
     data: Optional[tuple[tuple[MatLike, Page], ...]]
 
     @property
-    def pdf_path(self) -> Path:
-        return (self.datadir / self.key).with_suffix(".pdf")
-
-    @property
     def kern_path(self) -> Path:
-        return (self.datadir / self.key).with_suffix(".krn")
-
-    @property
-    def json_path(self) -> Path:
-        return (self.datadir / self.key).with_suffix(".json")
+        return self.dataset.kern_path(self.key)
 
     def __init__(
-        self, datadir: Path, pdf_path: str,
+        self, dataset: KernSheet, key: str,
+        pdf_path: Path, json_path: Path,
         width: int = WIDTH, do_plot: bool = False, no_cache: bool = False
     ):
-        self.datadir = Path(datadir)
-        self.key = pdf_path
+        self.dataset = dataset
+        self.key = key
+        self.pdf_path = pdf_path
+        self.json_path = json_path
         self.width = width
         self.do_plot = do_plot
         self.no_cache = no_cache

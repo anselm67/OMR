@@ -15,8 +15,8 @@
                 // "cleanup-pdf"
                 // "do"
                 // "update",
-                // "edit", "--all"
-                "edit", "chopin/ballade/ballade52"
+                "edit"
+                // "edit", "bach/fugue/bwv_873/bwv_873"
             ]
         },
         {

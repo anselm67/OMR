@@ -1,9 +1,8 @@
-import dataclasses
 import os
 import subprocess
-import typing
+from dataclasses import fields, is_dataclass
 from pathlib import Path
-from typing import Iterable, Optional, TypeAlias, Union
+from typing import Any, Iterable, Union, cast, get_args, get_origin
 
 import torch
 
@@ -62,3 +61,37 @@ def path_substract(shorter: Path, longer: Path) -> Path:
     prefix = os.path.commonprefix([shorter, longer])
     assert prefix is not None, f"Can't substract {shorter} from {longer}"
     return Path(os.path.relpath(longer, prefix))
+
+
+def from_json(cls: type, data: Any):
+    """Deserializes a json object into a dataclass instance.
+
+    This handles nested data classes and dict and list fields.
+
+    Args:
+        cls (type): Target class.
+        data (Any): The json object to deserialize.
+
+    Returns:
+        _type_: An instance of the target class.
+    """
+    if is_dataclass(cls):
+        field_types = {f.name: f.type for f in fields(cls)}
+        return cls(**{
+            key: from_json(cast(type, field_types[key]), value)
+            for key, value in data.items()
+        })
+
+    origin = get_origin(cls)
+
+    if origin is list:
+        item_type = get_args(cls)[0]
+        return [from_json(item_type, item) for item in data]
+    elif origin is dict:
+        item_type = get_args(cls)[1]
+        return {
+            key: from_json(item_type, value)
+            for key, value in data.items()
+        }
+    else:
+        return data

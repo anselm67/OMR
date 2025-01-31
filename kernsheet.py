@@ -21,19 +21,25 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from functools import reduce
 from pathlib import Path
-from typing import Dict, List, Optional, cast
+from typing import Dict, ItemsView, List, Optional, cast
 from urllib.parse import quote
 
 import click
 
 from imslp import IMSLP
 from make_kernsheet import make_kern_sheet, merge_asap
-from staff_editor import StaffEditor
-from staffer import Staffer
-from utils import path_substract
+from utils import from_json, path_substract
 
 
-@dataclass(frozen=True)
+@dataclass
+class Score:
+    # Relative path to the pdf file.
+    pdf_path: str
+    pdf_url: str
+    json_path: str
+
+
+@dataclass
 class Entry:
     # The source dataset for this entry, "kern-score/*.zip" or "asap"
     source: str
@@ -43,26 +49,25 @@ class Entry:
     imslp_query: str
     imslp_url: str
 
-    pdf_urls: List[str]
-
-    @staticmethod
-    def from_dict(data):
-        return Entry(**data)
+    scores: list[Score] = field(default_factory=list)
 
 
-@dataclass(frozen=True)
+@dataclass
 class Catalog:
-    version: int = 1
+    version: int = 2
 
-    entries: Dict[str, Entry] = field(default_factory=dict)
+    entries: dict[str, Entry] = field(default_factory=dict)
 
 
 class KernSheet:
     CATALOG_NAME = "catalog.json"
 
     datadir: Path
-    version: int = 1
-    entries: Dict[str, Entry]
+    catalog: Catalog
+
+    @property
+    def entries(self) -> dict[str, Entry]:
+        return self.catalog.entries
 
     def __init__(self, datadir: Path):
         super().__init__()
@@ -78,25 +83,20 @@ class KernSheet:
     def json_path(self, key: str) -> Path:
         return (self.datadir / key).with_suffix(".json")
 
+    def relative(self, path: Path) -> str:
+        return str(path_substract(self.datadir, path))
+
     def load_catalog(self):
         path = self.datadir / self.CATALOG_NAME
-        self.version = 1
-        self.entries = {}
         if path.exists():
             with open(path, "r") as fp:
                 obj = json.load(fp)
-            self.version = obj["version"]
-            self.entries = {kern_file: Entry.from_dict(
-                entry_dict) for kern_file, entry_dict in obj["entries"].items()}
+            self.catalog = cast(Catalog, from_json(Catalog, obj))
 
     def save_catalog(self):
         path = self.datadir / self.CATALOG_NAME
-        entries = {k: asdict(e) for k, e in self.entries.items()}
         with open(path, "w+") as fp:
-            json.dump({
-                "version": 1,
-                "entries": dict(sorted(entries.items()))
-            }, fp, indent=4)
+            json.dump(asdict(self.catalog), fp, indent=4)
 
     KERN_SCORE_URL = "https://kern.humdrum.org/cgi-bin/ksdata?location=users/craig/classical/"
 
@@ -180,6 +180,31 @@ class KernSheet:
             self.save_catalog()
             time.sleep(20 + random.randint(10, 20))
 
+    def first_score(self, entry: Entry) -> tuple[bool, Optional[Score]]:
+        score = next((s for s in entry.scores if s.pdf_path), None)
+        if score is None:
+            return False, None
+
+        needs_save = False
+        pdf_path = Path(self.datadir) / score.pdf_path
+        if not pdf_path.exists():
+            score.pdf_path = ""
+            needs_save = True
+        if score.json_path:
+            json_path = Path(self.datadir) / score.json_path
+            if not json_path.exists():
+                score.json_path = ""
+                needs_save = True
+        if score.pdf_path and not score.json_path:
+            json_path = pdf_path.with_suffix(".json")
+            score.json_path = self.relative(json_path)
+            needs_save = True
+
+        if not score.pdf_path or not score.json_path:
+            return needs_save, None
+        else:
+            return needs_save, score
+
     def edit(
         self,
         key: Optional[str] = None,
@@ -187,29 +212,46 @@ class KernSheet:
         fast_mode: bool = False,
         no_cache: bool = False, do_plot: bool = False
     ):
+        from staff_editor import StaffEditor
+        from staffer import Staffer
+
         if key is None:
             # Loops through all samples in need of verification, skips non pdf.
             for key, entry in self.entries.items():
-                if not self.pdf_path(key).exists():
+                dirty, score = self.first_score(entry)
+                if score is None:
                     continue
+                pdf_path = self.datadir / score.pdf_path
+                json_path = self.datadir / score.json_path
                 staffer = Staffer(
-                    self.datadir, key, do_plot=do_plot, no_cache=no_cache
+                    self, key,
+                    pdf_path, json_path,
+                    do_plot=do_plot, no_cache=no_cache
                 )
                 if all or not staffer.is_validated():
-                    print(
-                        f"Editing {key}\n"
-                        f"\timslp_url: {entry.imslp_url}\n"
-                        f"\tpdf_urls: {entry.pdf_urls}\n"
-                    )
+                    print(f"Editing {key} - {pdf_path.name}")
                     editor = StaffEditor(staffer)
                     if not editor.edit(fast_mode):
                         break
+                if dirty:
+                    self.save_catalog()
         else:
             # Edits the given entry.
-            staffer = Staffer(
-                self.datadir, key, do_plot=do_plot, no_cache=no_cache
-            )
-            StaffEditor(staffer).edit(fast_mode)
+            entry = self.entries[key]
+            dirty, score = self.first_score(entry)
+            if score is None:
+                print(f"No pdf or json for {entry}")
+            else:
+                pdf_path = self.datadir / score.pdf_path
+                json_path = self.datadir / score.json_path
+                staffer = Staffer(
+                    self, key,
+                    pdf_path, json_path,
+                    do_plot=do_plot, no_cache=no_cache
+                )
+                StaffEditor(staffer).edit(fast_mode)
+            if dirty:
+                self.save_catalog()
 
 
 @click.command()
