@@ -499,6 +499,7 @@ class StaffEditor:
                 image,
                 replace(page, validated=True, staves=[])
             )
+        print(f"Blanked pages {range.start} to {range.stop}.")
 
     def init_commands(self):
         self.actions = {}
