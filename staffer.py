@@ -334,21 +334,21 @@ class Staffer:
             # Uses the cache when available.
             png_files = sorted(self.pdf_cache.glob(
                 f"{self.pdf_path.stem}-*.png"))
-            if len(png_files) > 0 and (
-                expected_count < 0 or len(png_files) == expected_count
-            ):
-                logging.info(f"Reading pages from cache: {self.pdf_cache}")
-                return tuple(
-                    np.array(cv2.imread(png_file.as_posix()))
-                    for png_file in png_files
-                )
-            elif expected_count >= 0:
-                # The cache is invalid.
-                logging.info(
-                    f"Invalidating cache for {self.pdf_path}: "
-                    f"got {len(png_files)} instead of {expected_count}"
-                )
-                shutil.rmtree(self.pdf_cache)
+            if len(png_files) > 0:
+                if expected_count < 0 or len(png_files) == expected_count:
+                    logging.info(f"Reading pages from cache: {self.pdf_cache}")
+                    return tuple(
+                        np.array(cv2.imread(png_file.as_posix()))
+                        for png_file in png_files
+                    )
+                elif expected_count >= 0:
+                    # The cache is invalid.
+                    logging.info(
+                        f"Invalidating cache for {self.pdf_path}: "
+                        f"got {len(png_files)} instead of {expected_count}"
+                    )
+                    for file in png_files:
+                        file.unlink(missing_ok=True)
 
         # Extracts images from pdf and caches them.
         pdf = convert_from_path(self.pdf_path)
