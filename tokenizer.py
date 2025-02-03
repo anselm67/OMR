@@ -201,9 +201,18 @@ class NormHandler(BaseHandler):
         return False
 
     def fix_bar(self, tokens: List[Tuple[Spine, Token]]) -> bool:
+
+        def requires_bar(t: Token) -> bool:
+            if isinstance(t, (Note, Chord, Rest)):
+                return True
+            # A non numbered repeat bar also requires a preceeding bar zero.
+            if isinstance(t, Bar) and not cast(Bar, t).requires_valid_bar_number():
+                return True
+            return False
+
         # If we see a note or chord before any bar, emit a fake bar 0.
         if not self.bar_zero:
-            if any([isinstance(t, (Note, Chord, Rest)) for _, t in tokens]):
+            if any([requires_bar(t) for _, t in tokens]):
                 bar = Bar("*fake*", 0, False, False, False, False)
                 if self.output:
                     self.output.write('\t'.join([
