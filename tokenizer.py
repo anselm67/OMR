@@ -138,7 +138,7 @@ class BaseHandler(Parser[Spine].Handler):
                    spine_type: Optional[str] = None,
                    parent: Optional[Spine] = None) -> Spine:
         match spine_type:
-            case "**dynam":
+            case "**dynam" | "**dynam/2":
                 spine = IgnoredSpine()
             case _:
                 spine = Spine()
@@ -287,7 +287,6 @@ def parse_file(
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> bool:
-    print(f"+ {path}")
     try:
         if isinstance(handler_obj, Parser.Handler):
             handler = cast(Parser.Handler, handler_obj)
