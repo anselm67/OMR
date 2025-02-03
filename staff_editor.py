@@ -1,4 +1,5 @@
 import logging
+import subprocess
 from dataclasses import replace
 from typing import Any, Callable, List, Tuple
 
@@ -501,6 +502,14 @@ class StaffEditor:
             )
         print(f"Blanked pages {page_range.start} to {page_range.stop}.")
 
+    def edit_kern_and_tokens(self):
+        path = self.staffer.kern_path
+        subprocess.run([
+            "code",
+            path.as_posix(),
+            path.with_suffix(".tokens").as_posix()
+        ])
+
     def init_commands(self):
         self.actions = {}
         self.register_actions(
@@ -572,7 +581,10 @@ class StaffEditor:
             Action(85, lambda: self.blank_pages(range(0, self.position)),
                    "Removes all bars from previous pages (current page excluded) and validates them."),
             Action(86, lambda: self.blank_pages(range(self.position+1, len(self.data))),
-                   "Removes all bars from next pages and (current page excluded) validates them.")
+                   "Removes all bars from next pages and (current page excluded) validates them."),
+
+            Action('!', self.edit_kern_and_tokens,
+                   "Edit kern and token files.")
         )
 
     def run_command(self, key_code) -> bool:
