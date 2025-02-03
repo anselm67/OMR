@@ -207,48 +207,46 @@ class KernSheet:
 
     def edit(
         self,
-        key: Optional[str] = None,
+        key: str | Path,
         all: bool = True,
         fast_mode: bool = False,
         no_cache: bool = False, do_plot: bool = False
-    ):
+    ) -> bool:
+        do_continue = True
         from staff_editor import StaffEditor
         from staffer import Staffer
 
-        if key is None:
-            # Loops through all samples in need of verification, skips non pdf.
-            for key, entry in self.entries.items():
-                dirty, score = self.first_score(key, entry)
-                if score is None:
-                    continue
-                pdf_path = self.datadir / score.pdf_path
-                json_path = self.datadir / score.json_path
-                staffer = Staffer(
-                    self, key, pdf_path, json_path, Staffer.Config(
-                        pdf_cache=True)
-                )
-                if all or not staffer.is_validated():
-                    print(f"Editing {key} - {pdf_path.name}")
-                    editor = StaffEditor(staffer)
-                    if not editor.edit(fast_mode):
-                        break
-                if dirty:
-                    self.save_catalog()
-        else:
-            # Edits the given entry.
-            entry = self.entries[key]
-            dirty, score = self.first_score(key, entry)
-            if score is None:
-                print(f"No pdf or json for {entry}")
-            else:
-                pdf_path = self.datadir / score.pdf_path
-                json_path = self.datadir / score.json_path
-                staffer = Staffer(
-                    self, key, pdf_path, json_path, Staffer.Config()
-                )
-                StaffEditor(staffer).edit(fast_mode)
-            if dirty:
-                self.save_catalog()
+        key = Path(key)
+        if not Path(key).exists():
+            raise FileNotFoundError(f"{Path(key)} - no such file.")
+        key = self.relative(key.with_suffix(""))
+        entry = self.entries.get(key, None)
+        if entry is None:
+            raise FileNotFoundError(f"{key} - no such key.")
+        dirty, score = self.first_score(key, entry)
+        if score is None:
+            # No scores attached to that entry yet.
+            return do_continue
+        pdf_path = self.datadir / score.pdf_path
+        json_path = self.datadir / score.json_path
+        staffer = Staffer(
+            self, key, pdf_path, json_path, Staffer.Config(
+                pdf_cache=True, no_cache=no_cache, do_plot=do_plot)
+        )
+        if all or not staffer.is_validated():
+            print(f"Editing {key} - {pdf_path.name}")
+            editor = StaffEditor(staffer)
+            do_continue = editor.edit(fast_mode)
+        if dirty:
+            self.save_catalog()
+        return do_continue
+
+    def ls(self):
+        for key, entry in self.entries.items():
+            has_pdf = any((s.pdf_path for s in entry.scores))
+            has_jon = any((s.json_path for s in entry.scores))
+            if has_jon and not has_pdf:
+                print(key)
 
 
 @click.command()
@@ -258,8 +256,27 @@ def fix_imslp(ctx):
     kern_sheet.fix_imslp()
 
 
+def edit_directory(
+    kern_sheet: KernSheet, dir: Path,
+    all: bool, no_cache: bool, do_plot: bool, fast_mode: bool
+) -> bool:
+    for path in dir.iterdir():
+        if path.suffix == ".krn":
+            return kern_sheet.edit(
+                path, all=all, no_cache=no_cache,
+                do_plot=do_plot, fast_mode=fast_mode
+            )
+        elif path.is_dir() and not edit_directory(
+            kern_sheet, path, all, no_cache, do_plot, fast_mode
+        ):
+            return False
+    return True
+
+
 @click.command()
-@click.argument("kern_path", type=str, required=False, default=None)
+@click.argument("kern_path", nargs=-1,
+                type=click.Path(dir_okay=True, exists=True, readable=True),
+                required=False)
 @click.option("--all", "all", is_flag=True, default=False,
               help="Edit all files, even validated ones.")
 @click.option("--no-cache", "no_cache", is_flag=True, default=False,
@@ -269,10 +286,20 @@ def fix_imslp(ctx):
 @click.option("--fast-mode", "fast_mode", is_flag=True, default=False,
               help="Turns fast mode on automatically for al scores.")
 @click.pass_context
-def edit(ctx, kern_path: Optional[str], all: bool, no_cache: bool, do_plot: bool, fast_mode: bool):
+def edit(ctx, kern_path: list[Path], all: bool, no_cache: bool, do_plot: bool, fast_mode: bool):
     kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.edit(kern_path, all=all, no_cache=no_cache,
-                    do_plot=do_plot, fast_mode=fast_mode)
+    if len(kern_path) == 0:
+        kern_path = [kern_sheet.datadir]
+    for path in kern_path:
+        path = Path(path)
+        if path.is_dir():
+            if not edit_directory(kern_sheet, path, all, no_cache, do_plot, fast_mode):
+                break
+        elif not kern_sheet.edit(
+            path, all=all, no_cache=no_cache,
+            do_plot=do_plot, fast_mode=fast_mode
+        ):
+            break
 
 
 @click.command()
@@ -288,6 +315,13 @@ def update(ctx):
     # By load & save we ensure all optional fields of Enrty are now available.
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.save_catalog()
+
+
+@click.command()
+@click.pass_context
+def ls(ctx):
+    kern_sheet = cast(KernSheet, ctx.obj)
+    kern_sheet.ls()
 
 
 @click.group
@@ -308,6 +342,7 @@ cli.add_command(fix_imslp)
 cli.add_command(edit)
 cli.add_command(stats)
 cli.add_command(update)
+cli.add_command(ls)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
