@@ -40,7 +40,7 @@ def tokens_file_tokenizer(vocab: Dict[str, int], path: Union[Path, str]) -> int:
     return token_count
 
 
-DATADIR = Path("/home/anselm/Downloads/GrandPiano/")
+DATADIR = Path("/home/anselm/datasets/GrandPiano/")
 
 
 def vocab(

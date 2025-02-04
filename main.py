@@ -65,7 +65,7 @@ def plot(ctx, smooth: bool):
 @click.group
 @click.option('--dataset-path', '-d', 'dataset_path',
               type=click.Path(file_okay=False, dir_okay=True, writable=True),
-              default='/home/anselm/Downloads/GrandPiano')
+              default='/home/anselm/datasets/GrandPiano')
 @click.option('--model-path', '-m', 'model_path',
               type=click.Path(file_okay=False, dir_okay=True, writable=True),
               default="untracked/")
