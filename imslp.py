@@ -2,20 +2,15 @@
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional, cast
 from urllib.parse import unquote
 
 import requests
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 
 class IMSLP:
     IMSLP_BASE_URL = "https://imslp.org"
-
-    logger: logging.Logger
-
-    def __init__(self, logger: Optional[logging.Logger] = None):
-        self.logger = logger or logging.getLogger(__name__)
 
     URL_LINK_RE = re.compile(r'^/url.q=([^\&]*)\&.*$')
 
@@ -30,7 +25,7 @@ class IMSLP:
             or None if none was found.
         """
         try:
-            self.logger.info(f"Googling '{query}' for imslp page.")
+            logging.info(f"Googling '{query}' for imslp page.")
             resp = requests.get(
                 url="https://www.google.com/search",
                 headers={
@@ -66,13 +61,13 @@ class IMSLP:
 
     COMPLETE_SCORE_RE = re.compile(r'^.*Complete Score.*$')
 
-    def _extract_download_links(self, content: bytes) -> List[str]:
+    def _extract_download_links(self, content: bytes) -> list[str]:
         links = list([])
         soup = BeautifulSoup(content, "html.parser")
         for a in soup.find_all("a"):
             if a.has_attr("rel") and "nofollow" in a["rel"]:
                 span = a.find("span")
-                if span and span["title"] == "Download this file":
+                if span and span.has_attr('title') and span["title"] == "Download this file":
                     if self.COMPLETE_SCORE_RE.match(span.text):
                         links.append(a["href"])
         return links
@@ -84,16 +79,38 @@ class IMSLP:
         "imslpdisclaimeraccepted": "yes",
     }
 
-    def find_pdf_links(self, imslp_page: str) -> List[str]:
-        self.logger.info(f"Extracting download links from {imslp_page}")
+    def find_pdf_links(self, imslp_page: str) -> list[str]:
+        """Extracts all download links from the given IMSLP page.
+
+        Args:
+            imslp_page (str): URL of the IMSLP page.
+
+        Returns:
+            list[str]: List of download links found.
+        """
+        logging.info(f"Extracting download links from {imslp_page}")
         # Fetches the page and find the download link.
         response = requests.get(imslp_page)
         response.raise_for_status()
 
         return self._extract_download_links(response.content)
 
+    def download_link(self, pdf_link) -> Optional[str]:
+        response = requests.get(pdf_link, cookies=self.IMSLP_COOKIES)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.content, "html.parser")
+        span = cast(Tag, soup.find("span", id="sm_dl_wait"))
+        if span and span.has_attr('data-id'):
+            return cast(str, span['data-id'])
+        elif (a := soup.find("a", string="I agree with the disclaimer above, continue my download")):
+            a = cast(Tag, a)
+            if a.has_attr('href'):
+                return "https://imslp.eu" + str(a['href'])
+        return None
+
     def save_pdf(self, download_url: str, into: Path):
-        self.logger.info(f"\tSaving {download_url} to {into}")
+        logging.info(f"\tSaving {download_url} to {into}")
         try:
             response = requests.get(download_url)
             with open(into, "wb+") as fp:
