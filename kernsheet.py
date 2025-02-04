@@ -77,6 +77,15 @@ class KernSheet:
     def kern_path(self, key: str) -> Path:
         return (self.datadir / key).with_suffix(".krn")
 
+    def pdf_path(self, score: Score) -> Path:
+        return self.datadir / score.pdf_path
+
+    def json_path(self, score: Score) -> Path:
+        if score.json_path:
+            return self.datadir / score.json_path
+        else:
+            return self.pdf_path(score).with_suffix(".json")
+
     def relative(self, path: Path) -> str:
         return str(path_substract(self.datadir, path))
 
@@ -227,7 +236,7 @@ class KernSheet:
         # Verifies we're ok killing all scores of this entry.
         for score in entry.scores:
             if score.pdf_path or score.json_path:
-                logging.warning(f"{key} has valid scores.")
+                logging.info(f"{key} has valid scores.")
                 return False
         # Rebuilds a set of scores by picking some from IMSLP.
         imslp = IMSLP()
@@ -265,6 +274,12 @@ class KernSheet:
         from staff_editor import StaffEditor
         from staffer import Staffer
 
+        # No scores? warns and keeps going.
+        if len(entry.scores) == 0:
+            logging.warning(f"{key} has no scores.")
+            return True
+
+        # Edits or reviews all scores of that entry.
         for score in entry.scores:
             if not score.pdf_path:
                 logging.warning(
@@ -272,11 +287,7 @@ class KernSheet:
                     f"\tScore has no pdf (skipped)."
                 )
                 continue
-            pdf_path = self.datadir / score.pdf_path
-            if score.json_path:
-                json_path = self.datadir / score.json_path
-            else:
-                json_path = pdf_path.with_suffix(".json")
+            pdf_path = self.pdf_path(score)
             if not pdf_path.exists():
                 logging.warning(
                     f"{key} - {score.pdf_url}:\n"
@@ -284,20 +295,27 @@ class KernSheet:
                 )
                 continue
             staffer = Staffer(
-                self, key, pdf_path, json_path, Staffer.Config(
-                    pdf_cache=True, no_cache=no_cache, do_plot=do_plot)
-            )
+                self, key, score, Staffer.Config(
+                    no_cache=no_cache, do_plot=do_plot))
             do_continue = False
             if all or not staffer.is_validated():
                 editor = StaffEditor(staffer)
                 do_continue = editor.edit(fast_mode)
                 # Updates the entry with a json path if one was created.
-                if json_path.exists() and not score.json_path:
-                    score.json_path = self.relative(json_path)
+                if self.json_path(score).exists() and not score.json_path:
+                    score.json_path = self.relative(self.json_path(score))
                     self.save_catalog()
                 if not do_continue:
                     return False
         return True
+
+    def delete_score(self, key: str, score: Score):
+        entry = self.entries.get(key, None)
+        if entry:
+            entry.scores = [s for s in entry.scores if s != score]
+            logging.info(f"{key}: removed score {score.pdf_url}")
+            self.save_catalog()
+        return False
 
     def stats(self):
         from staffer import Staffer
@@ -308,14 +326,12 @@ class KernSheet:
                 score_count += 1
                 if not score.pdf_path or not score.json_path:
                     continue
-                pdf_path = self.datadir / score.pdf_path
-                json_path = self.datadir / score.json_path
-                if json_path.exists():
-                    staffer = Staffer(self, key, pdf_path,
-                                      json_path, Staffer.Config())
-                    if staffer.is_validated():
-                        s, b = staffer.counts()
-                        staff_count, bar_count = s+staff_count, b+bar_count
+                staffer = Staffer(
+                    self, key, score, Staffer.Config()
+                )
+                if staffer.is_validated():
+                    s, b = staffer.counts()
+                    staff_count, bar_count = s+staff_count, b+bar_count
 
         print(f"{score_count} scores: {
               staff_count:,} staves, {bar_count:,} bars.")

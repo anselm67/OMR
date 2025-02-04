@@ -14,7 +14,7 @@ from cv2.typing import MatLike
 from pdf2image import convert_from_path
 from scipy.signal import find_peaks
 
-from kernsheet import KernSheet
+from kernsheet import KernSheet, Score
 
 # Default width for the annotated images.
 # The annnotations are - of course -dependent on that width which is
@@ -64,6 +64,7 @@ class Staffer:
             )
 
     dataset: KernSheet
+    score: Score
     key: str
     width: int
     do_plot: bool
@@ -89,14 +90,15 @@ class Staffer:
 
     def __init__(
         self, dataset: KernSheet, key: str,
-        pdf_path: Path, json_path: Path,
+        score: Score,
         config: Config
     ):
         self.dataset = dataset
+        self.score = score
         self.key = key
-        self.pdf_path = pdf_path
-        self.json_path = json_path
-        self.pdf_cache = pdf_path.parent / PDF_CACHE if config.pdf_cache else None
+        self.pdf_path = dataset.pdf_path(score)
+        self.json_path = dataset.json_path(score)
+        self.pdf_cache = self.pdf_path.parent / PDF_CACHE if config.pdf_cache else None
         self.width = config.width
         self.do_plot = config.do_plot
         self.no_cache = config.no_cache
@@ -366,6 +368,8 @@ class Staffer:
     def load_images(self):
         assert self.pages is not None
         images = self.load_images_from_pdf(len(self.pages))
+        if len(images) != len(self.pages):
+            logging.warning(f"{self.key} pages from pdf/json mismatch.")
         self.data = tuple(
             (self.apply_page_transforms(image, page), page)
             for image, page in zip(images, self.pages)
@@ -425,8 +429,9 @@ class Staffer:
         assert self.data is not None, f"{self.key}: no staff found."
         return self.data
 
-    def unlink_pdf(self):
+    def delete_score(self):
         # We can't work with this .pdf file, remove it and kill any saved state.
+        self.dataset.delete_score(self.key, self.score)
         self.pdf_path.unlink(missing_ok=True)
         self.json_path.unlink(missing_ok=True)
         self.data = None

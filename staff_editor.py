@@ -413,9 +413,7 @@ class StaffEditor:
                     self.save()
                 return True
             elif key == ord('1'):
-                # TODO Requires catalog clean-up.
-                self.staffer.unlink_pdf()
-                print(f"{self.staffer.key} cleaned-up.")
+                self.staffer.delete_score()
                 return True
             else:
                 print(f"Unknown key: '{key}', press 'h' for help.")
