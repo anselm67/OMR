@@ -218,73 +218,74 @@ class KernSheet:
             self.save_catalog()
             time.sleep(20 + random.randint(10, 20))
 
-    def first_score(self, key: str, entry: Entry) -> tuple[bool, Optional[Score]]:
-        score = next((s for s in entry.scores if s.pdf_path), None)
-        if score is None:
-            return False, None
-
-        needs_save = False
-        pdf_path = Path(self.datadir) / score.pdf_path
-        if not pdf_path.exists():
-            score.pdf_path = ""
-            needs_save = True
-        if score.json_path:
-            json_path = Path(self.datadir) / score.json_path
-            if not json_path.exists():
-                score.json_path = ""
-                needs_save = True
-        if score.pdf_path and not score.json_path:
-            json_path = self.kern_path(key).with_suffix(".json")
-            score.json_path = self.relative(json_path)
-            needs_save = True
-
-        if not score.pdf_path or not score.json_path:
-            return needs_save, None
-        else:
-            return needs_save, score
-
     def edit(
         self,
-        key: str | Path,
+        kern_path: str | Path,
         all: bool = True,
         fast_mode: bool = False,
         no_cache: bool = False, do_plot: bool = False
     ) -> bool:
-        do_continue = True
         from staff_editor import StaffEditor
         from staffer import Staffer
 
-        key = Path(key)
-        if not Path(key).exists():
-            raise FileNotFoundError(f"{Path(key)} - no such file.")
-        key = self.relative(key.with_suffix(""))
+        kern_path = Path(kern_path)
+        if not Path(kern_path).exists():
+            raise FileNotFoundError(f"{Path(kern_path)} - no such file.")
+        key = self.relative(kern_path.with_suffix(""))
         entry = self.entries.get(key, None)
         if entry is None:
             raise FileNotFoundError(f"{key} - no such key.")
-        dirty, score = self.first_score(key, entry)
-        if score is None:
-            # No scores attached to that entry yet.
-            return do_continue
-        pdf_path = self.datadir / score.pdf_path
-        json_path = self.datadir / score.json_path
-        staffer = Staffer(
-            self, key, pdf_path, json_path, Staffer.Config(
-                pdf_cache=True, no_cache=no_cache, do_plot=do_plot)
-        )
-        if all or not staffer.is_validated():
-            print(f"Editing {key} - {pdf_path.name}")
-            editor = StaffEditor(staffer)
-            do_continue = editor.edit(fast_mode)
-        if dirty:
-            self.save_catalog()
-        return do_continue
+        for score in entry.scores:
+            if not score.pdf_path:
+                logging.warning(
+                    f"{key} - {score.pdf_url}:\n"
+                    f"\tScore has no pdf (skipped)."
+                )
+                continue
+            pdf_path = self.datadir / score.pdf_path
+            json_path = self.datadir / score.json_path
+            if not pdf_path.exists():
+                logging.warning(
+                    f"{key} - {score.pdf_url}:\n"
+                    f"PDF {pdf_path} not found (skipped)."
+                )
+                continue
+            staffer = Staffer(
+                self, key, pdf_path, json_path, Staffer.Config(
+                    pdf_cache=True, no_cache=no_cache, do_plot=do_plot)
+            )
+            done = False
+            if all or not staffer.is_validated():
+                editor = StaffEditor(staffer)
+                done = editor.edit(fast_mode)
+                # Updates the entry with a json path if one was created.
+                if json_path.exists() and not score.json_path:
+                    score.json_path = self.relative(json_path)
+                    self.save_catalog()
+                if done:
+                    return False
+        return True
 
-    def ls(self):
+    def stats(self):
+        from staffer import Staffer
+
+        score_count, staff_count, bar_count = 0, 0, 0
         for key, entry in self.entries.items():
-            has_pdf = any((s.pdf_path for s in entry.scores))
-            has_jon = any((s.json_path for s in entry.scores))
-            if has_jon and not has_pdf:
-                print(key)
+            for score in entry.scores:
+                score_count += 1
+                if not score.pdf_path or not score.json_path:
+                    continue
+                pdf_path = self.datadir / score.pdf_path
+                json_path = self.datadir / score.json_path
+                if json_path.exists():
+                    staffer = Staffer(self, key, pdf_path,
+                                      json_path, Staffer.Config())
+                    if staffer.is_validated():
+                        s, b = staffer.counts()
+                        staff_count, bar_count = s+staff_count, b+bar_count
+
+        print(f"{score_count} scores: {
+              staff_count:,} staves, {bar_count:,} bars.")
 
 
 @click.command()
@@ -342,17 +343,9 @@ def edit(ctx, kern_path: list[Path], all: bool, no_cache: bool, do_plot: bool, f
 
 @click.command()
 @click.pass_context
-def update(ctx):
-    # By load & save we ensure all optional fields of Enrty are now available.
+def stats(ctx):
     kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.save_catalog()
-
-
-@click.command()
-@click.pass_context
-def ls(ctx):
-    kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.ls()
+    kern_sheet.stats()
 
 
 @click.command()
@@ -380,8 +373,7 @@ cli.add_command(merge_asap)
 
 cli.add_command(fix_imslp)
 cli.add_command(edit)
-cli.add_command(update)
-cli.add_command(ls)
+cli.add_command(stats)
 cli.add_command(check)
 
 if __name__ == '__main__':

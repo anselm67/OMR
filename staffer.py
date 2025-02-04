@@ -437,3 +437,12 @@ class Staffer:
             return all((page.validated for page in pages))
         else:
             return False
+
+    def counts(self) -> tuple[int, int]:
+        staff_count, bar_count = 0, 0
+        if (pages := self.get_pages()) is not None:
+            for page in pages:
+                if page.validated:
+                    staff_count += len(page.staves)
+                    bar_count += sum((len(s.bars) for s in page.staves))
+        return staff_count, bar_count
