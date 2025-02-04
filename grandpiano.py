@@ -406,7 +406,7 @@ def make_vocab(ctx):
               help="Split train / valid data in this ratio.")
 @click.pass_context
 def refresh_list(ctx, split: float):
-    """Splits the dataset into train abd valid, and caches it.
+    """Splits the dataset into train and valid, and caches it.
     """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
@@ -456,7 +456,7 @@ def histo(ctx):
                 type=click.Path(file_okay=True),
                 required=True)
 @click.option("--pad", is_flag=True,
-              help="Pad the itemafter loading.")
+              help="Pad the item after loading.")
 @ click.pass_context
 def load(ctx, path: Path, pad: bool = False):
     """
