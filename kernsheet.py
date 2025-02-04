@@ -77,12 +77,6 @@ class KernSheet:
     def kern_path(self, key: str) -> Path:
         return (self.datadir / key).with_suffix(".krn")
 
-    def pdf_path(self, key: str) -> Path:
-        return (self.datadir / key).with_suffix(".pdf")
-
-    def json_path(self, key: str) -> Path:
-        return (self.datadir / key).with_suffix(".json")
-
     def relative(self, path: Path) -> str:
         return str(path_substract(self.datadir, path))
 
@@ -106,28 +100,72 @@ class KernSheet:
             f"&file={quote(kern_file.name)}&format=pdf"
         )
 
-    def stats(self):
-        """Checks for orphaned .krn files with no entries in the catalog.
+    def check(self, verbose: bool = False):
+        """Checks the catalog against the file structure.
+
+        Reports on .krn files without an entry, and on entries without a
+        .krn file. 
         """
-        total_count, miss_count, pdf_count, json_count = 0, 0, 0, 0
+        def v(msg: str):
+            if verbose:
+                print(msg)
+        file_count, noent_count = 0, 0
+        kern_seen = set()
+        # Checks the file system against the catalog.
         for root, _, filenames in os.walk(self.datadir):
             for filename in filenames:
                 file = Path(root) / filename
                 if file.suffix == ".krn":
-                    total_count += 1
+                    file_count += 1
                     key = str(path_substract(
                         self.datadir, file).with_suffix(""))
+                    kern_seen.add(key)
                     if not key in self.entries:
-                        miss_count += 1
-                    if self.pdf_path(key).exists():
-                        pdf_count += 1
-                    if self.json_path(key).exists():
-                        json_count += 1
+                        noent_count += 1
+        # Checks the catalog against the file system, and the scores
+        nokern_count, score_count = 0, 0
+        score_nopdf, score_nojson, broken_pdf, broken_json, score_nourl, score_tofetch = 0, 0, 0, 0, 0, 0
+
+        for key, entry in self.entries.items():
+            if not key in kern_seen:
+                nokern_count += 1
+                v(f"{key} has no .krn file.")
+            if len(entry.scores) == 0:
+                v(f"{key} has no scores.")
+                continue
+            # Checks each score.
+            score_count += len(entry.scores)
+            for s in entry.scores:
+                if s.json_path:
+                    if not (self.datadir / s.json_path).exists():
+                        broken_json += 1
+                        v(f"{s.json_path} not found.")
+                else:
+                    score_nojson += 1
+                    v(f"{key} score has no json.")
+                if s.pdf_path:
+                    if not (self.datadir / s.pdf_path).exists():
+                        broken_pdf += 1
+                        v(f"{s.pdf_path} not found.")
+                else:
+                    score_nopdf += 1
+                    v(f"{key} score has no pdf.")
+                if not s.pdf_url:
+                    score_nourl += 1
+                elif not s.pdf_path:
+                    score_tofetch += 1
         print(
-            f"{total_count} kern files:\n"
-            f"\twithout entries: {miss_count}\n"
-            f"\twith pdf       : {pdf_count}\n"
-            f"\twith json      : {json_count}\n"
+            f"{file_count} kern files:\n"
+            f"\twithout entries: {noent_count}\n"
+            f"{len(self.entries)} entries:\n"
+            f"\twithout .krn file: {nokern_count}\n"
+            f"\tscores count: {score_count}\n"
+            f"\t\tscores without source url: {score_nourl}\n"
+            f"\t\tscores with url, no pdf:   {score_tofetch}\n"
+            f"\t\tscores without pdf:        {score_nopdf}\n"
+            f"\t\tscores without json:       {score_nojson}\n"
+            f"\t\tscores with broken pdf:    {broken_pdf}\n"
+            f"\t\tscores with broken json:   {broken_json}\n"
         )
 
     KERN_KEYWORDS_RE = re.compile(r'^!!!(COM|OPR|OTL|OPS):\s*(.*)$')
@@ -304,13 +342,6 @@ def edit(ctx, kern_path: list[Path], all: bool, no_cache: bool, do_plot: bool, f
 
 @click.command()
 @click.pass_context
-def stats(ctx):
-    kern_sheet = cast(KernSheet, ctx.obj)
-    kern_sheet.stats()
-
-
-@click.command()
-@click.pass_context
 def update(ctx):
     # By load & save we ensure all optional fields of Enrty are now available.
     kern_sheet = cast(KernSheet, ctx.obj)
@@ -322,6 +353,15 @@ def update(ctx):
 def ls(ctx):
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.ls()
+
+
+@click.command()
+@click.option("--verbose", "-v", is_flag=True, default=False,
+              help="Print all issues found in the catalog.")
+@click.pass_context
+def check(ctx, verbose: bool):
+    kern_sheet = cast(KernSheet, ctx.obj)
+    kern_sheet.check(verbose)
 
 
 @click.group
@@ -340,9 +380,9 @@ cli.add_command(merge_asap)
 
 cli.add_command(fix_imslp)
 cli.add_command(edit)
-cli.add_command(stats)
 cli.add_command(update)
 cli.add_command(ls)
+cli.add_command(check)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
