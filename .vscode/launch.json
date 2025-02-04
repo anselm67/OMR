@@ -15,8 +15,9 @@
                 // "cleanup-pdf"
                 // "do"
                 // "update",
-                "edit", "--fast-mode"
+                "edit", "bach/fugue"
                 // "edit", "bach/inventions/inven01"
+                // "fetch-imslp", "bach/fugue/bwv_856/bwv_856"
             ]
         },
         {

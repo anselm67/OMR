@@ -21,7 +21,7 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from functools import reduce
 from pathlib import Path
-from typing import Optional, cast
+from typing import cast
 from urllib.parse import quote
 
 import click
@@ -123,7 +123,7 @@ class KernSheet:
                     if not key in self.entries:
                         noent_count += 1
         # Checks the catalog against the file system, and the scores
-        nokern_count, score_count = 0, 0
+        nokern_count, noscore_count, score_count = 0, 0, 0
         score_nopdf, score_nojson, broken_pdf, broken_json, score_nourl, score_tofetch = 0, 0, 0, 0, 0, 0
 
         for key, entry in self.entries.items():
@@ -131,6 +131,7 @@ class KernSheet:
                 nokern_count += 1
                 v(f"{key} has no .krn file.")
             if len(entry.scores) == 0:
+                noscore_count += 1
                 v(f"{key} has no scores.")
                 continue
             # Checks each score.
@@ -159,7 +160,8 @@ class KernSheet:
             f"\twithout entries: {noent_count}\n"
             f"{len(self.entries)} entries:\n"
             f"\twithout .krn file: {nokern_count}\n"
-            f"\tscores count: {score_count}\n"
+            f"\twithout scores:    {noscore_count}\n"
+            f"\tscores count:      {score_count}\n"
             f"\t\tscores without source url: {score_nourl}\n"
             f"\t\tscores with url, no pdf:   {score_tofetch}\n"
             f"\t\tscores without pdf:        {score_nopdf}\n"
@@ -218,9 +220,44 @@ class KernSheet:
             self.save_catalog()
             time.sleep(20 + random.randint(10, 20))
 
+    def fetch_imslp(self, key: str, how_many: int = 2) -> bool:
+        entry = self.entries.get(key)
+        if entry is None or not entry.imslp_url:
+            return False
+        # Verifies we're ok killing all scores of this entry.
+        for score in entry.scores:
+            if score.pdf_path or score.json_path:
+                logging.warning(f"{key} has valid scores.")
+                return False
+        # Rebuilds a set of scores by picking some from IMSLP.
+        imslp = IMSLP()
+        links = imslp.find_pdf_links(entry.imslp_url)
+        if len(links) == 0:
+            return False
+        elif len(links) > how_many:
+            logging.info(f"Picking {how_many} links from {len(links)}")
+            links = random.sample(links, how_many)
+        scores = []
+        for idx, link in enumerate(links):
+            path = self.datadir / key
+            path = path.with_stem(path.stem + f"-{idx}").with_suffix(".pdf")
+            url = imslp.download_link(link)
+            if url:
+                imslp.save_pdf(url, path)
+                scores.append(Score(
+                    pdf_path=self.relative(path),
+                    pdf_url=url,
+                    json_path=""
+                ))
+                time.sleep(10 + random.randint(0, 20))
+        # If we made it here, save the work.
+        entry.scores = scores
+        self.save_catalog()
+        return True
+
     def edit(
         self,
-        kern_path: str | Path,
+        key: str, entry: Entry,
         all: bool = True,
         fast_mode: bool = False,
         no_cache: bool = False, do_plot: bool = False
@@ -228,13 +265,6 @@ class KernSheet:
         from staff_editor import StaffEditor
         from staffer import Staffer
 
-        kern_path = Path(kern_path)
-        if not Path(kern_path).exists():
-            raise FileNotFoundError(f"{Path(kern_path)} - no such file.")
-        key = self.relative(kern_path.with_suffix(""))
-        entry = self.entries.get(key, None)
-        if entry is None:
-            raise FileNotFoundError(f"{key} - no such key.")
         for score in entry.scores:
             if not score.pdf_path:
                 logging.warning(
@@ -243,7 +273,10 @@ class KernSheet:
                 )
                 continue
             pdf_path = self.datadir / score.pdf_path
-            json_path = self.datadir / score.json_path
+            if score.json_path:
+                json_path = self.datadir / score.json_path
+            else:
+                json_path = pdf_path.with_suffix(".json")
             if not pdf_path.exists():
                 logging.warning(
                     f"{key} - {score.pdf_url}:\n"
@@ -254,15 +287,15 @@ class KernSheet:
                 self, key, pdf_path, json_path, Staffer.Config(
                     pdf_cache=True, no_cache=no_cache, do_plot=do_plot)
             )
-            done = False
+            do_continue = False
             if all or not staffer.is_validated():
                 editor = StaffEditor(staffer)
-                done = editor.edit(fast_mode)
+                do_continue = editor.edit(fast_mode)
                 # Updates the entry with a json path if one was created.
                 if json_path.exists() and not score.json_path:
                     score.json_path = self.relative(json_path)
                     self.save_catalog()
-                if done:
+                if not do_continue:
                     return False
         return True
 
@@ -295,27 +328,8 @@ def fix_imslp(ctx):
     kern_sheet.fix_imslp()
 
 
-def edit_directory(
-    kern_sheet: KernSheet, dir: Path,
-    all: bool, no_cache: bool, do_plot: bool, fast_mode: bool
-) -> bool:
-    for path in dir.iterdir():
-        if path.suffix == ".krn":
-            return kern_sheet.edit(
-                path, all=all, no_cache=no_cache,
-                do_plot=do_plot, fast_mode=fast_mode
-            )
-        elif path.is_dir() and not edit_directory(
-            kern_sheet, path, all, no_cache, do_plot, fast_mode
-        ):
-            return False
-    return True
-
-
 @click.command()
-@click.argument("kern_path", nargs=-1,
-                type=click.Path(dir_okay=True, exists=True, readable=True),
-                required=False)
+@click.argument("prefix", type=str, required=False, default="")
 @click.option("--all", "all", is_flag=True, default=False,
               help="Edit all files, even validated ones.")
 @click.option("--no-cache", "no_cache", is_flag=True, default=False,
@@ -325,17 +339,13 @@ def edit_directory(
 @click.option("--fast-mode", "fast_mode", is_flag=True, default=False,
               help="Turns fast mode on automatically for al scores.")
 @click.pass_context
-def edit(ctx, kern_path: list[Path], all: bool, no_cache: bool, do_plot: bool, fast_mode: bool):
+def edit(ctx, prefix: str, all: bool, no_cache: bool, do_plot: bool, fast_mode: bool):
     kern_sheet = cast(KernSheet, ctx.obj)
-    if len(kern_path) == 0:
-        kern_path = [kern_sheet.datadir]
-    for path in kern_path:
-        path = Path(path)
-        if path.is_dir():
-            if not edit_directory(kern_sheet, path, all, no_cache, do_plot, fast_mode):
-                break
-        elif not kern_sheet.edit(
-            path, all=all, no_cache=no_cache,
+    for key, entry in kern_sheet.entries.items():
+        if prefix and not key.startswith(prefix):
+            continue
+        if not kern_sheet.edit(
+            key, entry, all=all, no_cache=no_cache,
             do_plot=do_plot, fast_mode=fast_mode
         ):
             break
@@ -346,6 +356,18 @@ def edit(ctx, kern_path: list[Path], all: bool, no_cache: bool, do_plot: bool, f
 def stats(ctx):
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.stats()
+
+
+@click.command()
+@click.argument("prefix", type=str, required=False, default="")
+@click.pass_context
+def fetch_imslp(ctx, prefix: str):
+    kern_sheet = cast(KernSheet, ctx.obj)
+    for key, _ in kern_sheet.entries.items():
+        if prefix and not key.startswith(prefix):
+            continue
+        if kern_sheet.fetch_imslp(key):
+            time.sleep(30.0 + random.randint(0, 10))
 
 
 @click.command()
@@ -375,6 +397,7 @@ cli.add_command(fix_imslp)
 cli.add_command(edit)
 cli.add_command(stats)
 cli.add_command(check)
+cli.add_command(fetch_imslp)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
