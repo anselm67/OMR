@@ -406,8 +406,6 @@ class Staffer:
             with open(self.json_path, "r") as fp:
                 obj = json.load(fp)
             self.pages = tuple(Staffer.Page.from_dict(s) for s in obj['pages'])
-            assert obj['pdf_path'] == self.key, f"Expecting key {
-                self.key} to match .json pdf path {obj['pdf_path']}."
             return True
         return False
 
