@@ -340,6 +340,15 @@ class KernSheet:
 @click.command()
 @click.pass_context
 def fix_imslp(ctx):
+    """Associates entries with an IMSLP page.
+
+    Runs a Google query and attempts to match the given entry to 
+    an IMSLP page. PDFs for entries that have an IMSLP page can be
+    downloaded using the fetch-imslp command.
+
+    Args:
+        ctx (_type_): _description_
+    """
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.fix_imslp()
 
@@ -356,6 +365,18 @@ def fix_imslp(ctx):
               help="Turns fast mode on automatically for al scores.")
 @click.pass_context
 def edit(ctx, prefix: str, all: bool, no_cache: bool, do_plot: bool, fast_mode: bool):
+    """Edit all entries of the set of entries matching PREFIX when given.
+
+    Args:
+        ctx (_type_): Click context for the dataset.
+        prefix (str): Optional orefix of enrties to edit, all if none.
+        all (bool): Edit all scores, even the ones that have been validated.
+        no_cache (bool): Override the json cache, if any.
+        do_plot (bool): Plots sheet music histgrams to tune the staffer.
+        fast_mode (bool): Enables fast mode for all edits. In fast more, 
+           moving to next page (or entry) will autmatically validate and save
+           the current page.
+    """
     kern_sheet = cast(KernSheet, ctx.obj)
     for key, entry in kern_sheet.entries.items():
         if prefix and not key.startswith(prefix):
@@ -370,19 +391,33 @@ def edit(ctx, prefix: str, all: bool, no_cache: bool, do_plot: bool, fast_mode: 
 @click.command()
 @click.pass_context
 def stats(ctx):
+    """Provides statistics on the dataset, e.g. staves and bar counts.
+
+    Args:
+        ctx (_type_): _description_
+    """
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.stats()
 
 
 @click.command()
 @click.argument("prefix", type=str, required=False, default="")
+@click.option("--how-many", type=int, default=2, required=False)
 @click.pass_context
-def fetch_imslp(ctx, prefix: str):
+def fetch_imslp(ctx, prefix: str, how_many: int):
+    """Fetches IMSLP pdf for a set of catalog entries.
+
+    This will only lookup for entries that currently don't have 
+    any scores. Entries with at least one score will be skipped.
+    Args:
+        ctx (_type_): Click context for the dataset.
+        prefix (str): Count of pdf files to fetch per entries.
+    """
     kern_sheet = cast(KernSheet, ctx.obj)
     for key, _ in kern_sheet.entries.items():
         if prefix and not key.startswith(prefix):
             continue
-        if kern_sheet.fetch_imslp(key):
+        if kern_sheet.fetch_imslp(key, how_many=how_many):
             time.sleep(30.0 + random.randint(0, 10))
 
 
@@ -391,6 +426,12 @@ def fetch_imslp(ctx, prefix: str):
               help="Print all issues found in the catalog.")
 @click.pass_context
 def check(ctx, verbose: bool):
+    """Runs various sanity checks on the dataset.
+
+    Args:
+        ctx (_type_): Click ontext for the dataset.
+        verbose (bool): Prints problems as they're found.
+    """
     kern_sheet = cast(KernSheet, ctx.obj)
     kern_sheet.check(verbose)
 

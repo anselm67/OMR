@@ -12,7 +12,6 @@
 # bar count  : 72,808
 # chord count: 565,965
 
-from utils import path_substract
 import logging
 import os
 import shutil
@@ -20,6 +19,8 @@ import subprocess
 from pathlib import Path
 
 import click
+
+from utils import path_substract
 
 KERN_SCORES_URL = {
     "classical": "https://kern.humdrum.org/cgi-bin/ksdata?l=/users/craig/classical&format=zip",
@@ -634,6 +635,17 @@ def is_likely_pdf(path: Path):
                 required=False,
                 default="/home/anselm/datasets/kern-sheet")
 def make_kern_sheet(target_directory: Path):
+    """Initiale creation of the dataset.
+
+    This is kept here mostly for documentation; Recreating the dataset
+    from scratch is most likely impossible at this point.
+
+    This script fetches the inital KernScore zip files of piano
+    music kern files, and prunes unused content from them.
+
+    Args:
+        target_directory (Path): Direcory in which to create the dataset.
+    """
     target_directory = Path(target_directory)
     target_directory.mkdir(exist_ok=True)
     zip_directory = target_directory / "zip_sources"
@@ -967,6 +979,15 @@ ASAP_MERGES = [
                 type=click.Path(file_okay=False, dir_okay=True, exists=True),
                 default="/home/anselm/datasets/kern-sheet")
 def merge_asap(asap: Path, kern_sheet: Path):
+    """Merges the asap dataset with the KernScore.
+
+    This converts all the .musicxml file from the asap datasets into kern files,
+    and merges them in a suitable spot of the dataset beeing built.
+
+    Args:
+        asap (Path): _description_
+        kern_sheet (Path): _description_
+    """
     asap = Path(asap)
     # Converts all .musicxml files into .krn files using verovio.
     processed = 0
