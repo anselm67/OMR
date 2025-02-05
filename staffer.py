@@ -428,9 +428,10 @@ class Staffer:
         return self.data
 
     def delete_score(self):
-        # We can't work with this .pdf file, remove it and kill any saved state.
+        # Can't work with this score, deletes it.
+        # We can't unlink the pdf as it might be used by other
+        # kern files, insted we'll garbage collect them.
         self.dataset.delete_score(self.key, self.score)
-        self.pdf_path.unlink(missing_ok=True)
         self.json_path.unlink(missing_ok=True)
         self.data = None
 
