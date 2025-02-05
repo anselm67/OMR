@@ -333,9 +333,9 @@ class StaffEditor:
             bar_count += 1
         if bar_count == self.kern.bar_count:
             self.beep()
-            print("Bar count matches, victory !")
+            print(f"Yeay! {bar_count} is what we want, victory !")
         else:
-            print("Bar count mismtach, more work!")
+            print(f"Yuck, {bar_count} bars, expecting {self.kern.bar_count}.")
 
     def fix_side_bars(self):
         # Finds the left and right bars.
@@ -393,6 +393,10 @@ class StaffEditor:
                 False otherwise.
         """
 
+        self.clear()
+        print(f"{self.kern.bar_count} bars in {self.staffer.kern_path}")
+        print(f"pdf : {self.staffer.score.pdf_path}")
+        print(f"json: {self.staffer.score.json_path}")
         self.fast_mode = fast_mode
 
         while True:

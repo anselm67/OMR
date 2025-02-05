@@ -36,7 +36,6 @@ class KernReader:
                     if bar_number > 0 and self.first_bar < 0:
                         self.first_bar = bar_number
                     self.bars[bar_number] = lineno
-        logging.info(f"{len(self.bars) - 1} bars in {self.path}")
 
     def has_bar_zero(self):
         return 0 in self.bars
