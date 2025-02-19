@@ -444,6 +444,11 @@ class StaffEditor:
             else:
                 return "???"
 
+        # These following three commands don't have actions:
+        # they all quit the currrent editor, which actions can't do.
+        print(f"{key_name(ord('q')):<8}Quits the editor.")
+        print(f"{key_name(ord('n')):<8}Moves to next score.")
+        print(f"{key_name(ord('1')):<8}Deletes this score from the catalog.")
         for key_code, action in self.actions.items():
             print(f"{key_name(key_code):<8}{action.help}")
 
