@@ -138,7 +138,7 @@ class BaseHandler(Parser[Spine].Handler):
                    spine_type: Optional[str] = None,
                    parent: Optional[Spine] = None) -> Spine:
         match spine_type:
-            case "**dynam" | "**dynam/2":
+            case "**dynam" | "**dynam/2" | "**mxhm" | "**recip" | "**fb":
                 spine = IgnoredSpine()
             case _:
                 spine = Spine()
