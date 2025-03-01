@@ -172,7 +172,7 @@ def do_predict(model: nn.Module, page: MatLike):
     print(f"Found {len(bboxes)} bounding boxes:")
     for bbox in bboxes:
         print(
-            f"\t({bbox[0]}, {bbox[1]}), ({bbox[2]}, {bbox[3]}) @ {bbox[5]:.2f}"
+            f"\t({bbox[0]}, {bbox[1]}), ({bbox[2]}, {bbox[3]}) @ {bbox[4]:.2f}"
         )
         cv2.rectangle(page, (bbox[0], bbox[1]),
                       (bbox[2], bbox[3]), (255, 0, 0), 2)
