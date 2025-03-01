@@ -2,10 +2,9 @@
 
 import json
 import logging
-import shutil
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Tuple
+from typing import Any, Iterable, Optional
 
 import cv2
 import matplotlib.pyplot as plt
@@ -39,7 +38,7 @@ class Staffer:
     class Staff:
         rh_top: int
         lh_bot: int
-        bars: List[int]
+        bars: list[int]
 
     @dataclass(frozen=True)
     class Page:
@@ -51,7 +50,7 @@ class Staffer:
         image_height: int
 
         # Staves and validation.
-        staves: List['Staffer.Staff']
+        staves: list['Staffer.Staff']
         validated: bool
 
         image_rotation: float = 0.0
@@ -141,7 +140,7 @@ class Staffer:
         self,
         image: MatLike,
         min_rotation_angle_degrees=0.05,
-    ) -> Tuple[float, MatLike]:
+    ) -> tuple[float, MatLike]:
         angle = self.average_angle(image)
         if abs(angle) < min_rotation_angle_degrees:
             # For a 1200px width, 600px center to side:
@@ -154,7 +153,7 @@ class Staffer:
               self.average_angle(image):2.4f} degrees.")
         return angle, image
 
-    def line_indices(self, lines: List[int]) -> List[Tuple[int, int]]:
+    def line_indices(self, lines: list[int]) -> list[tuple[int, int]]:
         idx = 0
         out = []
         while idx+9 < len(lines):
@@ -164,7 +163,7 @@ class Staffer:
 
     def find_bars(
             self, image: MatLike, fill_rate: float = 0.8
-    ) -> List[int]:
+    ) -> list[int]:
         x_proj = np.sum(image, 0)
         # A bar goes from top to bottom, so we can compute a min height for
         # our peak by assuming a percentage fill rate on that vertical line.
@@ -183,7 +182,7 @@ class Staffer:
 
         return bar_peaks
 
-    def filter_staff_peaks(self, staff_peaks, peak_heights) -> List[int]:
+    def filter_staff_peaks(self, staff_peaks, peak_heights) -> list[int]:
         # Checks the gaps for a first (title) or last (legend) outlier.
         gaps = staff_peaks[1:] - staff_peaks[:-1]
         if len(gaps) > 0:
@@ -201,7 +200,7 @@ class Staffer:
         staff_peaks = [staff_peak for staff_peak, _ in sorted_peaks]
         return staff_peaks[:-1]
 
-    def transform(self, orig_image: MatLike) -> Tuple[float, MatLike]:
+    def transform(self, orig_image: MatLike) -> tuple[float, MatLike]:
         image = cv2.cvtColor(np.array(orig_image), cv2.COLOR_RGB2GRAY)
         h, w = image.shape
         scale = self.width / w
@@ -450,3 +449,21 @@ class Staffer:
                     staff_count += len(page.staves)
                     bar_count += sum((len(s.bars) for s in page.staves))
         return staff_count, bar_count
+
+    def extract_staves(self) -> list[tuple[MatLike, list[tuple[int, int, int, int]]]]:
+        samples = list()
+        if not self.is_validated():
+            logging.warning(f"{self.json_path} is not validated (skipped)")
+            return samples
+
+        def bbox(image: MatLike, staff: 'Staffer.Staff') -> tuple[int, int, int, int]:
+            if len(staff.bars) > 0:
+                left, right = staff.bars[0], staff.bars[-1]
+            else:
+                left, right = 0, image.shape[1]
+            return left, staff.rh_top, right, staff.lh_bot
+
+        return [
+            (image, [bbox(image, staff) for staff in page.staves])
+            for image, page in self.staff() if len(page.staves) > 0
+        ]
