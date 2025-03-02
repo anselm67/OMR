@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import logging
 import os
 import pickle
@@ -10,10 +11,20 @@ from typing import Optional, cast
 
 import click
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
 from cv2.typing import MatLike
+from numpy.typing import NDArray
+
+STAVES_DATASET = Path("/home/anselm/Downloads/staves-dataset")
+LOG_PATH = Path("untracked/log_extract_staves.json")
+MODEL_PATH = Path("untracked/extract_staves.pt")
+
+# (left, top, right, bottom)
+BoundingBox = tuple[int, int, int, int]
+PredictedBox = tuple[BoundingBox, float]
 
 
 def to32(i: int) -> int:
@@ -29,7 +40,7 @@ class Dataset:
 
     data: list[Path]
 
-    def __init__(self, home: Path):
+    def __init__(self, home: Path = STAVES_DATASET):
         self.data = list()
         for root, _, filenames in os.walk(home):
             for filename in filenames:
@@ -45,23 +56,29 @@ class Dataset:
         tensor, _ = self.load(path)
         return tensor.numpy()
 
-    def load(self, path: Path, transform=False) -> tuple[torch.Tensor, list[tuple[int, int, int, int]]]:
+    def load(self, path: Path, transform=False) -> tuple[torch.Tensor, list[BoundingBox]]:
         with open(path, "rb") as fp:
             page, crops = cast(
-                tuple[MatLike, list[tuple[int, int, int, int]]],
+                tuple[MatLike, list[BoundingBox]],
                 pickle.load(fp)
             )
             height, width, _ = page.shape
             page = cv2.resize(
                 page, (width // self.page_divider, height // self.page_divider))
+            crops = [(
+                left // self.page_divider,
+                top // self.page_divider,
+                right // self.page_divider,
+                bottom // self.page_divider
+            ) for left, top, right, bottom in crops]
             if transform:
                 return self.transform(page), crops
             else:
                 return torch.from_numpy(page), crops
 
-    @staticmethod
-    def transform(page: MatLike) -> torch.Tensor:
-        output = torch.full((Dataset.max_height, Dataset.max_width), 255)
+    @classmethod
+    def transform(cls, page: MatLike) -> torch.Tensor:
+        output = torch.full((cls.max_height, cls.max_width), 255)
         height, width, _ = page.shape
         output[:height, :width] = torch.from_numpy(
             cv2.cvtColor(page, cv2.COLOR_BGR2GRAY)
@@ -73,16 +90,16 @@ class Dataset:
         samples = [self.load(path, transform=True)
                    for path in random.sample(self.data, self.batch_size)]
 
-        def bounding_boxes(pages) -> torch.Tensor:
+        def bounding_boxes(pages: list[list[BoundingBox]]) -> torch.Tensor:
             empty = torch.full(
                 (self.batch_size, 5 * self.max_staves), 0).to(torch.float32)
             for batchno, bboxes in enumerate(pages):
                 x = 0
-                for bbox in bboxes:
-                    empty[batchno, x] = bbox[0] / self.max_width
-                    empty[batchno, x+1] = bbox[1] / self.max_height
-                    empty[batchno, x+2] = bbox[2] / self.max_width
-                    empty[batchno, x+3] = bbox[3] / self.max_height
+                for left, top, right, bottom in bboxes:
+                    empty[batchno, x] = left / self.max_width
+                    empty[batchno, x+1] = top / self.max_height
+                    empty[batchno, x+2] = right / self.max_width
+                    empty[batchno, x+3] = bottom / self.max_height
                     empty[batchno, x+4] = 1.0
                     x += 5
             return empty
@@ -91,6 +108,22 @@ class Dataset:
             torch.stack([page for page, _ in samples]),
             bounding_boxes([page for _, page in samples])
         )
+
+    @classmethod
+    def pred2bbox(cls, preds: torch.Tensor, is_logits: bool = True) -> list[PredictedBox]:
+        bboxes = list()
+        i = 0
+        while i < preds.shape[0]:
+            confidence = torch.sigmoid(preds[i+4]) if is_logits else preds[i+4]
+            bboxes.append(((
+                int(preds[i+0] * cls.max_width),
+                int(preds[i+1] * cls.max_height),
+                int(preds[i+2] * cls.max_width),
+                int(preds[i+3] * cls.max_height)),
+                confidence
+            ))
+            i += 5
+        return bboxes
 
     def stats(self):
         max_width, max_height, max_staves = 0, 0, 0
@@ -111,32 +144,23 @@ class StafferModel(nn.Module):
         super(StafferModel, self).__init__()
         self.net = nn.Sequential(
             # Layer 1 (BS, 1, H, W) -> (BS, 32, H/16, W/16)
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(1, 16, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
             # Layer 2
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
             # Layer 3
-            nn.Conv2d(64, 128, kernel_size=3, padding=2),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            # Layer 4
-            nn.Conv2d(128, 256, kernel_size=3, padding=2),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(2, 2),
         )
-        self.gap = nn.AdaptiveAvgPool2d((1, 1))
+        self.gap = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(256, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, 40))
+            nn.Linear(64, 8 * 5),
+        )
 
     def forward(self, x: torch.Tensor):
         x = self.net(x)
@@ -145,6 +169,21 @@ class StafferModel(nn.Module):
         # Apply sigmoidto the coordinates only.
         x[:, :4] = torch.sigmoid(x[:, :4])
         return x
+
+
+def draw(page: MatLike, boxes: list[PredictedBox], wait: bool = True) -> bool:
+    print(f"{len(boxes)} bounding boxes:")
+    for (left, top, right, bottom), confidence in boxes:
+        print(
+            f"\t({left}, {top}), ({right}, {bottom}) @ {confidence:.2f}"
+        )
+        cv2.rectangle(page, (left, top),
+                      (right, bottom), (255, 0, 0), 2)
+    if wait:
+        cv2.imshow("predict", page)
+        return cv2.waitKey(0) != ord('q')
+    else:
+        return True
 
 
 def do_predict(model: nn.Module, page: MatLike):
@@ -158,40 +197,50 @@ def do_predict(model: nn.Module, page: MatLike):
     input = Dataset.transform(page)
 
     yhat = model.forward(input.unsqueeze(0).unsqueeze(0))[0]
-    bboxes = list()
-    i = 0
-    while i < yhat.shape[0]:
-        bboxes.append((
-            int(yhat[i] * Dataset.max_width),
-            int(yhat[i+1] * Dataset.max_height),
-            int(yhat[i+2] * Dataset.max_width),
-            int(yhat[i+3] * Dataset.max_height),
-            yhat[i+4]       # Confidence
-        ))
-        i += 5
-    print(f"Found {len(bboxes)} bounding boxes:")
-    for bbox in bboxes:
-        print(
-            f"\t({bbox[0]}, {bbox[1]}), ({bbox[2]}, {bbox[3]}) @ {bbox[4]:.2f}"
-        )
-        cv2.rectangle(page, (bbox[0], bbox[1]),
-                      (bbox[2], bbox[3]), (255, 0, 0), 2)
+    boxes = Dataset.pred2bbox(yhat)
+    draw(page, boxes)
 
-    # target_height = 990
-    # height, width, _ = page.shape
-    # scale = target_height / height
-    # page = cv2.resize(
-    #     page, (int(width * scale), int(height*scale)), interpolation=cv2.INTER_AREA)
-    cv2.imshow("predict", page)
-    cv2.waitKey(0)
+
+class Log:
+
+    path: Path
+
+    mse_losses: list[float]
+    bce_losses: list[float]
+
+    def __init__(self, path=LOG_PATH):
+        self.path = path
+        self.load()
+
+    def load(self):
+        if self.path.exists():
+            with open(self.path, "r") as fp:
+                obj = json.load(fp)
+            self.mse_losses = obj["mse_losses"]
+            self.bce_losses = obj["bce_losses"]
+        else:
+            self.bce_losses = list()
+            self.mse_losses = list()
+
+    def save(self):
+        with open(self.path, "w+") as fp:
+            json.dump({
+                "mse_losses": self.mse_losses,
+                "bce_losses": self.bce_losses
+            }, fp, indent=4)
+
+    def log(self, mse_loss: float, bce_loss: float):
+        self.mse_losses.append(mse_loss)
+        self.bce_losses.append(bce_loss)
+        self.save()
 
 
 @click.command()
 @click.option("path", "-o", type=click.Path(file_okay=True, dir_okay=False),
-              default=Path("untracked/extract_staves.pt"))
+              default=MODEL_PATH)
 @click.option("epochs", "-e", type=int, default=64)
 def train(path: Path, epochs: int):
-    ds = Dataset(Path("/home/anselm/Downloads/staves-dataset"))
+    ds = Dataset()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logging.info(f"Using device {device}")
     model = StafferModel().to(device)
@@ -199,15 +248,13 @@ def train(path: Path, epochs: int):
     mse = nn.MSELoss()
     bce = nn.BCEWithLogitsLoss()
 
-    opt = torch.optim.Adam(
-        model.parameters(),
-        lr=0.0001, betas=(0.9, 0.98), eps=1e-9
-    )
+    log = Log()
+    opt = torch.optim.Adam(model.parameters(), lr=1e-4)
 
     batch_per_epochs = len(ds) // Dataset.batch_size
 
     count = 0
-    count_per_report = 500
+    count_per_report = 250
     last_report_count = 0
 
     # Mask to extract boxes 5-tuples
@@ -227,7 +274,9 @@ def train(path: Path, epochs: int):
             y_prob, yhat_prob = y[:, 4::5], yhat[:, 4::5]
             y_bboxes, yhat_bboxes = y[bbox_mask], yhat[bbox_mask]
 
-            loss = mse(y_bboxes, yhat_bboxes) + bce(yhat_prob, y_prob)
+            mse_loss = mse(y_bboxes, yhat_bboxes)
+            bce_loss = bce(yhat_prob, y_prob)
+            loss = 3 * mse_loss + bce_loss
             loss.backward()
             opt.step()
 
@@ -236,6 +285,7 @@ def train(path: Path, epochs: int):
             if count // count_per_report != last_report_count:
                 last_report_count = count // count_per_report
                 now = time.time()
+                # Logs status
                 logging.info(
                     f"Epoch: {epoch:2.2f} " +
                     f"batch {batchno}/{batch_per_epochs}, " +
@@ -243,6 +293,9 @@ def train(path: Path, epochs: int):
                     f"in {(now - start_time):.2f}s " +
                     f"loss: {loss.item():2.5f}"
                 )
+
+                # Tracks the losses.
+                log.log(mse_loss.item(), bce_loss.item())
                 start_time = time.time()
 
         torch.save({
@@ -255,7 +308,7 @@ def train(path: Path, epochs: int):
 @click.command()
 @click.option("model_path", "-m",
               type=click.Path(file_okay=True, dir_okay=False, exists=True),
-              default=Path("untracked/extract_staves.pt"))
+              default=MODEL_PATH)
 @click.argument("image_path",
                 type=click.Path(file_okay=True, dir_okay=False, exists=True),
                 required=False)
@@ -268,10 +321,66 @@ def predict(model_path: Path, image_path: Optional[Path] = None):
     if image_path is not None:
         do_predict(model, cv2.imread(str(image_path)))
     else:
-        ds = Dataset(Path("/home/anselm/Downloads/staves-dataset"))
+        ds = Dataset()
         while True:
             page = ds.pick_one()
             do_predict(model, page)
+
+
+@click.command()
+def draw_batch():
+    ds = Dataset()
+    pages, boxes = ds.batch()
+    for i in range(0, len(pages)):
+        page_boxes = ds.pred2bbox(boxes[i], is_logits=False)
+        if not draw(pages[i].numpy(), page_boxes, wait=True):
+            break
+
+
+def moving_average(y: NDArray[np.float32], window_size: int = 10) -> NDArray[np.float32]:
+    return np.convolve(y, np.ones(window_size) / window_size, mode='valid')
+
+
+@click.command()
+@click.argument("log_path",
+                type=click.Path(file_okay=True, dir_okay=False, exists=True),
+                default=LOG_PATH)
+@click.option("--smooth/--no-smooth", default=True,
+              help="Smooth the curves before plotting them.")
+def plot(log_path: Path = LOG_PATH, smooth: bool = True):
+    log = Log(Path(log_path))
+    # State and function to quit the tracking loop.
+    quit: bool = False
+
+    def on_key(event):
+        nonlocal quit
+        quit = (event.key == 'q')
+
+    fig, ax = plt.subplots()
+    fig.canvas.mpl_connect('key_press_event', on_key)
+    mse_plot, = ax.plot([], [], 'b', label='MSE loss.')
+    bce_plot, = ax.plot([], [], 'r', label='BCE loss.')
+    print("Press 'q' to quit.")
+
+    while not quit:
+        log.load()
+        if smooth:
+            mse_losses = moving_average(
+                np.array(log.mse_losses, dtype=np.float32))
+            bce_losses = moving_average(
+                np.array(log.bce_losses, dtype=np.float32))
+        else:
+            mse_losses = log.mse_losses
+            bce_losses = log.bce_losses
+        mse_plot.set_xdata(range(0, len(mse_losses)))
+        mse_plot.set_ydata(mse_losses)
+        bce_plot.set_xdata(range(0, len(bce_losses)))
+        bce_plot.set_ydata(bce_losses)
+        ax.relim()
+        ax.autoscale_view()
+        ax.legend()
+        fig.canvas.draw_idle()
+        plt.pause(1)
 
 
 @click.group()
@@ -281,6 +390,8 @@ def cli():
 
 cli.add_command(train)
 cli.add_command(predict)
+cli.add_command(draw_batch)
+cli.add_command(plot)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
