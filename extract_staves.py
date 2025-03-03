@@ -160,22 +160,22 @@ class StafferModel(nn.Module):
         super(StafferModel, self).__init__()
         self.net = nn.Sequential(
             # Layer 1 (BS, 1, H, W) -> (BS, 32, H/16, W/16)
-            nn.Conv2d(1, 16, kernel_size=12, stride=1, padding=1),
+            nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
             # Layer 2
-            nn.Conv2d(16, 32, kernel_size=6, stride=1, padding=1),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
             # Layer 3
-            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.MaxPool2d(2, 2),
         )
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64, Dataset.max_staves * 5),
+            nn.Linear(128, Dataset.max_staves * 5),
         )
 
     def forward(self, x: torch.Tensor):
@@ -189,11 +189,11 @@ class StafferModel(nn.Module):
 
 
 def draw(page: MatLike,
-         boxes: torch.Tensor,
-         true_boxes: Optional[torch.Tensor] = None,
+         boxes: list[PredictedBox],
+         true_boxes: Optional[list[PredictedBox]] = None,
          wait: bool = True) -> bool:
     print(f"{len(boxes)} bounding boxes:")
-    for (left, top, right, bottom), confidence in Dataset.pred2bbox(page.shape, boxes):
+    for (left, top, right, bottom), confidence in boxes:
         print(
             f"\t({left}, {top}), ({right}, {bottom}) @ {confidence:.2f}"
         )
@@ -201,7 +201,7 @@ def draw(page: MatLike,
             cv2.rectangle(page, (left, top),
                           (right, bottom), (255, 0, 0), 2)
     if true_boxes is not None:
-        for (left, top, right, bottom), confidence in Dataset.pred2bbox(page.shape, true_boxes):
+        for (left, top, right, bottom), confidence in true_boxes:
             if confidence > 0:
                 cv2.rectangle(page, (left, top),
                               (right, bottom), (0, 255, 0), 2)
@@ -216,9 +216,21 @@ def do_predict(model: nn.Module,
                page: MatLike,
                true_boxes: Optional[torch.Tensor] = None) -> bool:
     input, _ = Dataset.transform(page)
-
     yhat = model.forward(input.unsqueeze(0).unsqueeze(0))[0]
-    return draw(page, yhat, true_boxes)
+
+    input_height, input_width = input.shape[0:2]
+    page_height, page_width = page.shape[0:2]
+
+    boxes = yhat[:, 0:4]
+    boxes[:, ::2] = input_width * boxes[:, ::2] / page_width
+    boxes[:, 1::2] = input_height * boxes[:, 1::2] / page_height
+
+    yhat[:, 0:4] = boxes
+    pred_boxes = Dataset.pred2bbox(page.shape, yhat)
+    if true_boxes is not None:
+        return draw(page, pred_boxes, Dataset.pred2bbox(page.shape, true_boxes))
+    else:
+        return draw(page, pred_boxes)
 
 
 class Log:
@@ -265,7 +277,7 @@ def train(path: Path, epochs: int):
     logging.info(f"Using device {device}")
     model = StafferModel().to(device)
 
-    iou = torchvision.ops.distance_box_iou_loss
+    mse = torch.nn.MSELoss()
     bce = nn.BCEWithLogitsLoss()
 
     log = Log()
@@ -287,6 +299,7 @@ def train(path: Path, epochs: int):
         for batchno in range(0, batch_per_epochs):
 
             opt.zero_grad()
+
             pages, y = ds.batch()
             pages, y = pages.to(device), y.to(device)
             yhat = model.forward(pages.unsqueeze(1))
@@ -298,12 +311,12 @@ def train(path: Path, epochs: int):
             mask = (y_bboxes != ds.no_box)
             y_bboxes, yhat_bboxes = y_bboxes[mask], yhat_bboxes[mask]
 
-            iou_loss = iou(
+            mse_loss = mse(
                 yhat_bboxes.view((-1, 4)),
-                y_bboxes.view((-1, 4)),
-                reduction="mean")
+                y_bboxes.view((-1, 4))
+            )
             bce_loss = bce(yhat_prob, y_prob)
-            loss = iou_loss + bce_loss
+            loss = 10 * mse_loss + bce_loss
             loss.backward()
             opt.step()
 
@@ -318,13 +331,13 @@ def train(path: Path, epochs: int):
                     f"batch {batchno}/{batch_per_epochs}, " +
                     f"{count} samples " +
                     f"in {(now - start_time):.2f}s " +
-                    f"iou_loss: {iou_loss.item():2.5f}, "
+                    f"mse_loss: {mse_loss.item():2.5f}, "
                     f"bce_loss: {bce_loss.item():2.5f}, "
                     f"loss: {loss.item():2.5f}"
                 )
 
                 # Tracks the losses.
-                log.log(iou_loss.item(), bce_loss.item())
+                log.log(mse_loss.item(), bce_loss.item())
                 start_time = time.time()
 
         torch.save({
@@ -364,7 +377,7 @@ def draw_batch():
     ds = Dataset()
     pages, boxes = ds.batch()
     for i in range(0, len(pages)):
-        if not draw(pages[i].numpy(), boxes[i], wait=True):
+        if not draw(pages[i].numpy(), ds.pred2bbox(pages[i].shape, boxes[i]), wait=True):
             break
 
 
