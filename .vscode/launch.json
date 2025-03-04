@@ -49,9 +49,9 @@
             "console": "integratedTerminal",
             "args": [
                 // "predict", "/home/anselm/datasets/kern-sheet/bach/inventions/.pdfcache/inven01-001.png"
-                // "train"
+                "train"
                 // "draw-batch"
-                "predict"
+                // "predict"
             ]
         }
     ]
