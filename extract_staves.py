@@ -57,12 +57,27 @@ class Dataset:
         pages, boxes = self.batch(1, transform=False)
         return pages[0], boxes[0]
 
+    def random_hide(
+        self, page: MatLike, boxes: list[BoundingBox]
+    ) -> tuple[MatLike, list[BoundingBox]]:
+        def blank(page: MatLike, box: tuple[int, int, int, int]) -> MatLike:
+            _, top, _, bottom = box
+            page[top-5:bottom+5, :] = (255, 255, 255)
+            return page
+        count = random.randint(0, len(boxes) // 2)
+        for _ in range(0, count):
+            i = random.randint(0, len(boxes) - 1)
+            page = blank(page, boxes[i])
+            del boxes[i]
+        return page, boxes
+
     def load(self, path: Path, transform=False) -> tuple[torch.Tensor, torch.Tensor]:
         with open(path, "rb") as fp:
             page, crops = cast(
                 tuple[MatLike, list[BoundingBox]],
                 pickle.load(fp)
             )
+            page, crops = self.random_hide(page, crops)
             height, width, _ = page.shape
             target_height, target_width = height // self.page_divider, width // self.page_divider
             page = cv2.resize(page, (target_width, target_height))
@@ -277,7 +292,7 @@ def train(path: Path, epochs: int):
     logging.info(f"Using device {device}")
     model = StafferModel().to(device)
 
-    mse = torch.nn.MSELoss()
+    mse = torch.nn.MSELoss(reduction='mean')
     bce = nn.BCEWithLogitsLoss()
 
     log = Log()
@@ -293,6 +308,9 @@ def train(path: Path, epochs: int):
     bbox_mask = torch.full((Dataset.batch_size, 8, 5), True, dtype=torch.bool)
     bbox_mask[:, :, 4::5] = False
 
+    pages, y = ds.batch()
+    pages, y = pages.to(device), y.to(device)
+
     start_time = time.time()
     for epoch in range(0, epochs):
         model.train()
@@ -300,8 +318,8 @@ def train(path: Path, epochs: int):
 
             opt.zero_grad()
 
-            pages, y = ds.batch()
-            pages, y = pages.to(device), y.to(device)
+            # pages, y = ds.batch()
+            # pages, y = pages.to(device), y.to(device)
             yhat = model.forward(pages.unsqueeze(1))
 
             # Extracts the confidence from the batch and the model output.
@@ -315,8 +333,14 @@ def train(path: Path, epochs: int):
                 yhat_bboxes.view((-1, 4)),
                 y_bboxes.view((-1, 4))
             )
+            box_loss = mse_loss
+            # giou_loss = giou(
+            #     yhat_bboxes.view((-1, 4)),
+            #     y_bboxes.view((-1, 4))
+            # )
+            # box_loss = torch.max(mse_loss, giou_loss).mean()
             bce_loss = bce(yhat_prob, y_prob)
-            loss = 10 * mse_loss + bce_loss
+            loss = box_loss + bce_loss
             loss.backward()
             opt.step()
 
@@ -331,13 +355,13 @@ def train(path: Path, epochs: int):
                     f"batch {batchno}/{batch_per_epochs}, " +
                     f"{count} samples " +
                     f"in {(now - start_time):.2f}s " +
-                    f"mse_loss: {mse_loss.item():2.5f}, "
+                    f"box_loss: {box_loss.item():2.5f}, "
                     f"bce_loss: {bce_loss.item():2.5f}, "
                     f"loss: {loss.item():2.5f}"
                 )
 
                 # Tracks the losses.
-                log.log(mse_loss.item(), bce_loss.item())
+                log.log(box_loss.item(), bce_loss.item())
                 start_time = time.time()
 
         torch.save({
