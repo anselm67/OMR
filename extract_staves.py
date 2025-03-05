@@ -176,20 +176,30 @@ class StafferModel(nn.Module):
         self.net = nn.Sequential(
             # Layer 1 (BS, 1, H, W) -> (BS, 32, H/16, W/16)
             nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
             # Layer 2
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
             # Layer 3
             nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2, 2),
+            # Layer 4
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2),
         )
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.fc = nn.Sequential(
             nn.Flatten(),
+            nn.Linear(256, 128),
+            nn.ReLU(inplace=True),
             nn.Linear(128, Dataset.max_staves * 5),
         )
 
@@ -198,8 +208,8 @@ class StafferModel(nn.Module):
         x = self.gap(x)
         x = self.fc(x)
         # Apply sigmoid to the coordinates only.
-        x = x.view((-1, 8, 5))
-        x[:, :, :4] = torch.sigmoid(x[:, :, :4])
+#        x = x.view((-1, 8, 5))
+#        x[:, :, :4] = torch.sigmoid(x[:, :, :4])
         return x.view((-1, 8, 5))
 
 
@@ -243,6 +253,26 @@ def do_predict(model: nn.Module,
     yhat[:, 0:4] = boxes
     pred_boxes = Dataset.pred2bbox(page.shape, yhat)
     if true_boxes is not None:
+        # Computes and displays the losses.
+        mse = torch.nn.MSELoss(reduction='none')
+        giou = torchvision.ops.generalized_box_iou_loss
+        box_mask = torch.full((8, 5), True, dtype=torch.bool)
+        box_mask[:, 4::5] = False
+        y_boxes, yhat_boxes = true_boxes[box_mask], yhat[box_mask]
+
+        mask = (y_boxes != Dataset.no_box)
+        y_boxes, yhat_boxes = y_boxes[mask], yhat_boxes[mask]
+
+        mse_loss = mse(
+            yhat_boxes.view((-1, 4)),
+            y_boxes.view((-1, 4))
+        ).mean(1)
+        giou_loss = giou(
+            yhat_boxes.view((-1, 4)),
+            y_boxes.view((-1, 4)),
+        )
+        print(f"MSE Loss: {mse_loss.mean()}, GIOU Loss: {giou_loss.mean()}")
+        pred_boxes = Dataset.pred2bbox(page.shape, yhat)
         return draw(page, pred_boxes, Dataset.pred2bbox(page.shape, true_boxes))
     else:
         return draw(page, pred_boxes)
@@ -252,7 +282,7 @@ class Log:
 
     path: Path
 
-    iou_losses: list[float]
+    box_losses: list[float]
     bce_losses: list[float]
 
     def __init__(self, path=LOG_PATH):
@@ -263,21 +293,21 @@ class Log:
         if self.path.exists():
             with open(self.path, "r") as fp:
                 obj = json.load(fp)
-            self.iou_losses = obj["iou_losses"]
+            self.box_losses = obj["box_losses"]
             self.bce_losses = obj["bce_losses"]
         else:
             self.bce_losses = list()
-            self.iou_losses = list()
+            self.box_losses = list()
 
     def save(self):
         with open(self.path, "w+") as fp:
             json.dump({
-                "iou_losses": self.iou_losses,
+                "box_losses": self.box_losses,
                 "bce_losses": self.bce_losses
             }, fp, indent=4)
 
-    def log(self, iou_loss: float, bce_loss: float):
-        self.iou_losses.append(iou_loss)
+    def log(self, box_loss: float, bce_loss: float):
+        self.box_losses.append(box_loss)
         self.bce_losses.append(bce_loss)
         self.save()
 
@@ -289,14 +319,15 @@ class Log:
 def train(path: Path, epochs: int):
     ds = Dataset()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     logging.info(f"Using device {device}")
     model = StafferModel().to(device)
 
-    mse = torch.nn.MSELoss(reduction='mean')
     bce = nn.BCEWithLogitsLoss()
+    giou = torchvision.ops.generalized_box_iou_loss
 
     log = Log()
-    opt = torch.optim.Adam(model.parameters(), lr=1e-4)
+    opt = torch.optim.Adam(model.parameters(), lr=5e-4)
 
     batch_per_epochs = len(ds) // Dataset.batch_size
 
@@ -308,9 +339,6 @@ def train(path: Path, epochs: int):
     bbox_mask = torch.full((Dataset.batch_size, 8, 5), True, dtype=torch.bool)
     bbox_mask[:, :, 4::5] = False
 
-    pages, y = ds.batch()
-    pages, y = pages.to(device), y.to(device)
-
     start_time = time.time()
     for epoch in range(0, epochs):
         model.train()
@@ -318,8 +346,8 @@ def train(path: Path, epochs: int):
 
             opt.zero_grad()
 
-            # pages, y = ds.batch()
-            # pages, y = pages.to(device), y.to(device)
+            pages, y = ds.batch()
+            pages, y = pages.to(device), y.to(device)
             yhat = model.forward(pages.unsqueeze(1))
 
             # Extracts the confidence from the batch and the model output.
@@ -329,16 +357,16 @@ def train(path: Path, epochs: int):
             mask = (y_bboxes != ds.no_box)
             y_bboxes, yhat_bboxes = y_bboxes[mask], yhat_bboxes[mask]
 
-            mse_loss = mse(
+            x1, y1, x2, y2 = yhat_bboxes.view((-1, 4)).unbind(dim=-1)
+            x1, x2 = torch.min(x1, x2), torch.max(x1, x2)
+            y1, y2 = torch.min(y1, y2), torch.max(y1, y2)
+            yhat_bboxes = torch.stack((x1, y1, x2, y2), dim=-1)
+
+            giou_loss = giou(
                 yhat_bboxes.view((-1, 4)),
                 y_bboxes.view((-1, 4))
-            )
-            box_loss = mse_loss
-            # giou_loss = giou(
-            #     yhat_bboxes.view((-1, 4)),
-            #     y_bboxes.view((-1, 4))
-            # )
-            # box_loss = torch.max(mse_loss, giou_loss).mean()
+            ).mean()
+            box_loss = giou_loss
             bce_loss = bce(yhat_prob, y_prob)
             loss = box_loss + bce_loss
             loss.backward()
@@ -426,22 +454,22 @@ def plot(log_path: Path = LOG_PATH, smooth: bool = True):
 
     fig, ax = plt.subplots()
     fig.canvas.mpl_connect('key_press_event', on_key)
-    iou_plot, = ax.plot([], [], 'b', label='IOU loss.')
+    box_plot, = ax.plot([], [], 'b', label='BOX loss.')
     bce_plot, = ax.plot([], [], 'r', label='BCE loss.')
     print("Press 'q' to quit.")
 
     while not quit:
         log.load()
         if smooth:
-            iou_losses = moving_average(
-                np.array(log.iou_losses, dtype=np.float32))
+            box_losses = moving_average(
+                np.array(log.box_losses, dtype=np.float32))
             bce_losses = moving_average(
                 np.array(log.bce_losses, dtype=np.float32))
         else:
-            iou_losses = log.iou_losses
+            box_losses = log.box_losses
             bce_losses = log.bce_losses
-        iou_plot.set_xdata(range(0, len(iou_losses)))
-        iou_plot.set_ydata(iou_losses)
+        box_plot.set_xdata(range(0, len(box_losses)))
+        box_plot.set_ydata(box_losses)
         bce_plot.set_xdata(range(0, len(bce_losses)))
         bce_plot.set_ydata(bce_losses)
         ax.relim()
