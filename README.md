@@ -1,4 +1,4 @@
-Optical Music Recognition.
+# Optical Music Recognition.
 
 This uses the GrandPiano dataset to train a Transformer network to translate sheet music
 aka images, into a simplified *kern representation. The simplification of *kern consists
@@ -19,12 +19,16 @@ KernSheet dataset
 The KernSheet dataset will eventually map bars within a score (aka pdf) 
 into the corresponding bars within the kern file. Here is how to cook it:
 
+```shell
 # ./kernsheet.py make-kern-sheet TARGET
+```
 TARGET is the (existing) directory in which you want to create the 
 dataset. This command will fetch a bunch of .zip files from KernScore
 and copy them locally.
 
+```shell
 # ./kernsheet.py merge-asap ASAP TARGET
+```
 ASAP is a direxctory in which you've cloned the asap-dataset (see above)
 and TARGET is your target KernSheet dataset directory. This command will
 convert all .musicxml files into .krn file and move them to their appropriate
