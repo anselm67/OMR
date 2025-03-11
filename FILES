@@ -25,13 +25,6 @@ train.py
     All train related commands.
 kernsheet.py
     A tool to maintain and develop the KernSheet dataset.
-extract_staves.py
-    Standalonr model and training loop for staves detection. The dataset
-    used for this is the kern-sheet/ dataset, which is transformed into
-    the staves-dataset by extracting - for each page of sheet music - an
-    image and the corresponding bounding boxes oordinates.
-    # ./kern-sheet extract-staves STAVES_DATASET_DIRECTORY
-    will create the dataset from the kern-sheet dataset.
     
 Building the KernSheet dataset ~/Downloads/KernSheet/:
 - *.krn: Original krn files mostly from the KernScore repository, piano only.
@@ -44,7 +37,7 @@ these files are computed with various tools:
     # ./staffer staff ~/Downloads/KernSheet
 
     
-Converting a .krn file to pdfm with transposition:
+Converting a .krn file to pdf with transposition:
 
 # ./verovio/tools/verovio -r ~/Downloads/verovio/data \
     --transpose m2 \
