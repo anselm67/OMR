@@ -236,5 +236,4 @@ class Train(Model):
 def train(ctx, epoch_count: int, batch_size: int):
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     context.require_train().train(epoch_count, batch_size)
