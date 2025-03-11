@@ -42,16 +42,13 @@
             ]
         },
         {
-            "name": "ExtractStaves",
+            "name": "LitTrainer",
             "type": "debugpy",
             "request": "launch",
-            "program": "extract_staves.py",
+            "program": "train2.py",
             "console": "integratedTerminal",
             "args": [
-                // "predict", "/home/anselm/datasets/kern-sheet/bach/inventions/.pdfcache/inven01-001.png"
                 "train"
-                // "draw-batch"
-                // "predict"
             ]
         }
     ]
