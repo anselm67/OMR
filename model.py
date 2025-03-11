@@ -7,31 +7,8 @@ from typing import Dict
 import torch
 import torch.nn as nn
 
+from config import Config
 from grandpiano import GrandPiano
-
-
-@dataclass
-class Config:
-    # Dataset related configuration, provided by GrandPiano.
-    image_height: int = 256
-    max_image_width: int = 2048
-    max_sequence_height: int = 12
-    max_sequence_width: int = 300
-    vocab_size: int = -1
-
-    # Image embedder config.
-    image_reducer: int = 64
-    embed_size: int = 256
-
-    # Sequence embedder config.
-    sequence_reducer: int = 64
-
-    # Transformer config.
-    num_head = 8
-    num_encoder_layers = 4
-    num_decoder_layers = 4
-    dim_feed_forward = 1024
-    dropout = 0.1
 
 
 class Embedder(nn.Module):
@@ -75,13 +52,13 @@ class Translator(nn.Module):
     def __init__(self, config: Config):
         super(Translator, self).__init__()
         self.source_embedder = Embedder(
-            config.max_image_width,
-            config.image_height,
+            config.ipad_shape[1],
+            config.ipad_shape[0],
             config.image_reducer, config.embed_size
         )
         self.target_embedder = Embedder(
-            config.max_sequence_width - 1,
-            config.max_sequence_height,
+            config.spad_len - 1,
+            config.max_chord,
             config.sequence_reducer, config.embed_size
         )
         self.transformer = nn.Transformer(
@@ -95,7 +72,7 @@ class Translator(nn.Module):
         )
         self.generator = nn.Linear(
             config.embed_size,
-            config.max_sequence_height * config.vocab_size)
+            config.max_chord * config.vocab_size)
 
     def forward(self, source, target, attention_mask):
         source_embeds = self.source_embedder(source)
