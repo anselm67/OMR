@@ -311,27 +311,6 @@ class KernSheet:
                     return False
         return True
 
-    def extract_staves(self, dst_dir: Path) -> int:
-        from staffer import Staffer
-        count = 0
-        for key, entry in self.entries.items():
-            for score in entry.scores:
-                if not score.pdf_path or not score.json_path:
-                    continue
-                staffer = Staffer(
-                    self, key, score, Staffer.Config()
-                )
-                if staffer.is_validated():
-                    for idx, sample in enumerate(staffer.extract_staves()):
-                        count += 1
-                        dst_file = (
-                            dst_dir / f"{key}_{idx:03d}").with_suffix(".pkl")
-                        dst_file.parent.mkdir(parents=True, exist_ok=True)
-                        print(f"{dst_file}: {len(sample[1])}")
-                        with open(dst_file, "wb+") as fp:
-                            pickle.dump(sample, fp)
-        return count
-
     def delete_score(self, key: str, score: Score):
         entry = self.entries.get(key, None)
         if entry:
@@ -424,18 +403,6 @@ def stats(ctx):
 
 
 @click.command()
-@click.argument("dst_dir", required=True,
-                type=click.Path(file_okay=False, dir_okay=True, exists=False))
-@click.pass_context
-def extract_staves(ctx, dst_dir: Path):
-    dst_dir = Path(dst_dir)
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    kern_sheet = cast(KernSheet, ctx.obj)
-    count = kern_sheet.extract_staves(dst_dir)
-    print(f"count: {count} samples")
-
-
-@click.command()
 @click.argument("prefix", type=str, required=False, default="")
 @click.option("--how-many", type=int, default=2, required=False)
 @click.pass_context
@@ -490,8 +457,6 @@ cli.add_command(edit)
 cli.add_command(stats)
 cli.add_command(check)
 cli.add_command(fetch_imslp)
-
-cli.add_command(extract_staves)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
