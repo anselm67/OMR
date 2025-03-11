@@ -61,7 +61,8 @@ def moving_average(y: NDArray[np.float32], window_size: int = 10) -> NDArray[np.
                 type=click.Path(file_okay=True, dir_okay=False, exists=True))
 @click.option("--smooth/--no-smooth", default=True,
               help="Smooth the curves before plotting them.")
-def plot(log_path: Path, smooth: bool = True):
+@click.option("--hide", "-h", multiple=True, type=str)
+def plot(log_path: Path, hide: list[str], smooth: bool = True):
 
     def load() -> dict[str, list[tuple[int, float]]]:
         with open(log_path, "r") as fp:
@@ -84,6 +85,8 @@ def plot(log_path: Path, smooth: bool = True):
 
         metrics = load()
         for key, metric in metrics.items():
+            if key in hide:
+                continue
             line = lines.get(key, None)
             if line is None:
                 line, = ax.plot([], [], label=key)
