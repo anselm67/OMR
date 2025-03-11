@@ -42,10 +42,9 @@ class ClickContext:
     def get_config(self) -> Config:
         gp = self.require_dataset()
         return Config(
-            image_height=GrandPiano.Stats.image_height,
-            max_image_width=gp.ipad_len,                       # TODO
-            max_sequence_height=GrandPiano.Stats.max_chord,
-            max_sequence_width=gp.spad_len,                     # TODO
+            ipad_shape=(GrandPiano.Stats.image_height, gp.ipad_len),
+            max_chord=GrandPiano.Stats.max_chord,
+            spad_len=gp.spad_len,                     # TODO
             vocab_size=gp.vocab_size,
         )
 
