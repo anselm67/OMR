@@ -76,20 +76,27 @@ def plot(log_path: Path, smooth: bool = True):
 
     fig, ax = plt.subplots()
     fig.canvas.mpl_connect('key_press_event', on_key)
-    loss_plot, = ax.plot([], [], 'r', label='Loss.')
     print("Press 'q' to quit.")
+
+    lines = {}
 
     while not quit:
 
         metrics = load()
-        x, y = zip(*metrics["train_loss"])
-        if smooth:
-            y = moving_average(np.array(y))
-            x = x[-len(y):]
-        loss_plot.set_xdata(x)
-        loss_plot.set_ydata(y)
-        ax.relim()
-        ax.autoscale_view()
-        ax.legend()
+        for key, metric in metrics.items():
+            line = lines.get(key, None)
+            if line is None:
+                line, = ax.plot([], [], label=key)
+                lines[key] = line
+
+            x, y = zip(*metric)
+            if smooth:
+                y = moving_average(np.array(y))
+                x = x[-len(y):]
+            line.set_xdata(x)
+            line.set_ydata(y)
+            ax.relim()
+            ax.autoscale_view()
+            ax.legend()
         fig.canvas.draw_idle()
         plt.pause(1)
