@@ -1,14 +1,13 @@
 
 
 import math
-from dataclasses import dataclass
 from typing import Dict
 
 import torch
 import torch.nn as nn
 
 from config import Config
-from grandpiano import GrandPiano
+from dataset import Vocab
 
 
 class Embedder(nn.Module):
@@ -77,12 +76,12 @@ class Translator(nn.Module):
     def forward(self, source, target, attention_mask):
         source_embeds = self.source_embedder(source)
         target_embeds = self.target_embedder(target)
-        source_mask = (source == GrandPiano.PAD[0])[:, :, 0]
+        source_mask = (source == Vocab.PAD)[:, :, 0]
         outs = self.transformer(
             src=source_embeds, tgt=target_embeds,
             tgt_mask=attention_mask,
             src_key_padding_mask=source_mask,
-            tgt_key_padding_mask=(target == GrandPiano.PAD[0])[:, :, 0],
+            tgt_key_padding_mask=(target == Vocab.PAD)[:, :, 0],
             memory_key_padding_mask=source_mask,
         )
         B, T, H = target.shape

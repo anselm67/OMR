@@ -81,17 +81,14 @@ class Dataset(utils.data.Dataset):
     s_sos: Tensor
     s_eos: Tensor
 
-    def __init__(self, config, vocab: Vocab, data: list[Path]):
+    transforms: v2.Compose
+
+    def __init__(self, config, vocab: Vocab, data: list[Path], transforms: v2.Compose):
         self.config = config
         self.vocab = vocab
         self.data = data
         # Image transforms
-        self.transform = v2.Compose([
-            v2.Grayscale(),
-            FixedHeightResize(self.config.ipad_shape[0]),
-            v2.ToDtype(torch.float),
-            v2.Normalize(mean=[228.06], std=[62.78])
-        ])
+        self.transforms = transforms
 
         # Precomputes padding tensors (start/end) x (image, seq)
         self.s_sos = torch.full((1, self.config.max_chord), Vocab.SOS)
@@ -116,7 +113,7 @@ class Dataset(utils.data.Dataset):
     def _load_image(self, path: Path) -> Tensor:
         c, v = self.config, self.vocab
         image = decode_image(Path(path.with_suffix(".jpg")).as_posix())
-        image = self.transform(image)
+        image = self.transforms(image)
         image = image.squeeze(0).permute(1, 0)
         width, height = image.shape
         ipad_height, ipad_len = c.ipad_shape
@@ -184,7 +181,11 @@ class Factory:
     data: list[Path]
     vocab: Vocab
 
+    train_transforms: v2.Compose
     stats_transforms: v2.Compose
+
+    # An empty Dataset() that allows us to load and prepare images and sequences.
+    data_loader: Dataset
 
     def __init__(self, home: Path, config: Config, refresh: bool = False):
         """Initializes the dataset.
@@ -206,19 +207,29 @@ class Factory:
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
         ])
+        self.train_transforms = v2.Compose([
+            v2.Grayscale(),
+            FixedHeightResize(self.config.ipad_shape[0]),
+            v2.ToDtype(torch.float),
+            v2.Normalize(mean=[228.06], std=[62.78])
+        ])
         self._load(refresh)
         self._vocab(refresh)
         self.config = replace(self.config, vocab_size=len(self.vocab))
+        self.data_loader = Dataset(
+            self.config, self.vocab, [], self.train_transforms)
 
     def datasets(self, valid_split: float) -> tuple['Dataset', 'Dataset']:
         train_len = int((1.0 - valid_split) * len(self.data))
         return (
-            Dataset(self.config, self.vocab, self.data[:train_len]),
-            Dataset(self.config, self.vocab, self.data[train_len:])
+            Dataset(self.config, self.vocab,
+                    self.data[:train_len], self.train_transforms),
+            Dataset(self.config, self.vocab,
+                    self.data[train_len:], self.train_transforms)
         )
 
     def dataset(self):
-        return Dataset(self.config, self.vocab, self.data)
+        return Dataset(self.config, self.vocab, self.data, self.train_transforms)
 
     def _accept(self, tokens_path: Path, stats: Stats) -> bool:
         if not tokens_path.with_suffix(".jpg").exists():
@@ -277,6 +288,12 @@ class Factory:
             with open(pkl_path, "rb") as f:
                 tok2i = pickle.load(f)
         self.vocab = Vocab(self.config, tok2i)
+
+    def load_image(self, path: Path) -> Tensor:
+        return self.data_loader._load_image(path)
+
+    def load_sequence(self, path: Path) -> Tensor:
+        return self.data_loader._load_sequence(path)
 
 
 @click.command()

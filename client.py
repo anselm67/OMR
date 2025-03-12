@@ -1,16 +1,19 @@
+import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, cast
+from typing import Optional, cast
 
 import click
 import torch
+from torch import utils
 from torchinfo import summary
 
-from grandpiano import GrandPiano
-from model import Config, Translator
+from config import Config
+from dataset import Vocab
+from model import Translator
 from utils import DeviceType, compare_sequences, current_commit
 
 
-class Model:
+class Client:
 
     config: Config
     name: str
@@ -20,36 +23,29 @@ class Model:
     training_samples: int
     git_hash: str
 
-    @staticmethod
-    def get_model_path(outdir: Path, name: str) -> Path:
-        return Path(outdir) / f"{name}_model.pt"
-
     def __init__(
-        self, config: Config, outdir: Path, name: str,
-        device: Optional[DeviceType] = None, create: bool = False
+        self, config: Config,
+        ckpt_path: Path,
+        device: Optional[DeviceType] = None
     ):
         self.config = config
-        self.name = name
         self.device = device or (
             "cuda" if torch.cuda.is_available() else "cpu")
-        self.load(self.get_model_path(outdir, name), create)
+        # Checks the git hash and loads the model.
+        if self.config.git_hash != current_commit():
+            logging.warning("Git hash mismatch: model may not load.")
+        self.load(ckpt_path)
 
-    def load(self, path: Path, create: bool = False):
+    def load(self, path: Path):
         self.model = Translator(self.config).to(self.device)
-        if path.exists():
-            obj = torch.load(path, weights_only=True)
-            self.model.load_state_dict(obj["state_dict"])
-            self.training_samples = obj["training_samples"]
-            self.git_hash = obj["git_hash"]
-        elif create:
-            self.training_samples = 0
-            self.git_hash = current_commit()
-        else:
-            raise FileNotFoundError(
-                f"Model file {path} and not found."
-            )
+        ckpt = torch.load(path, weights_only=True)
+        self.training_samples = ckpt["global_step"] * self.config.batch_size
+        self.model.load_state_dict({
+            key.replace("model.", ""): value
+            for key, value in ckpt["state_dict"].items()
+        })
 
-    target_mask_cache: Dict[int, torch.Tensor] = {}
+    target_mask_cache: dict[int, torch.Tensor] = {}
 
     def get_target_mask(self, size: int) -> torch.Tensor:
         mask = self.target_mask_cache.get(size, None)
@@ -59,25 +55,26 @@ class Model:
             self.target_mask_cache[size] = mask
         return mask
 
-    def beam_decode(self, gp: GrandPiano, source: torch.Tensor) -> torch.Tensor:
+    def beam_decode(self, source: torch.Tensor) -> torch.Tensor:
+        c, v = self.config, Vocab
         top_k = 3
         beam_width = 6
 
         self.model.eval()
-        source_key_padding_mask = (source == GrandPiano.PAD[0])[:, :, 0]
+        source_key_padding_mask = (source == v.PAD)[:, :, 0]
         memory = self.model.encode(
             source,
             src_key_padding_mask=source_key_padding_mask.to(self.device)
         )
         ys = torch.full(
-            (gp.spad_len, gp.Stats.max_chord), fill_value=GrandPiano.PAD[0]
+            (c.spad_len, c.max_chord), fill_value=v.PAD
         ).to(self.device)
-        ys[0, :] = GrandPiano.SOS[0]
+        ys[0, :] = v.SOS
 
-        beams: List[Tuple[torch.Tensor, float]] = [(ys, 0.0)]
-        done:  List[Tuple[torch.Tensor, float]] = []
-        for idx in range(1, gp.spad_len-1):
-            candidates:  List[Tuple[torch.Tensor, float]] = []
+        beams: list[tuple[torch.Tensor, float]] = [(ys, 0.0)]
+        done:  list[tuple[torch.Tensor, float]] = []
+        for idx in range(1, c.spad_len-1):
+            candidates:  list[tuple[torch.Tensor, float]] = []
 
             for seq, score in beams:
 
@@ -86,7 +83,7 @@ class Model:
                     seq[:idx, :].unsqueeze(0), memory, target_mask)
                 out = out.transpose(0, 1)
                 out = self.model.generator(out[:, -1])
-                out = out.view(-1, gp.Stats.max_chord, gp.vocab_size)
+                out = out.view(-1, c.max_chord, c.vocab_size)
                 prob = torch.nn.functional.log_softmax(out, dim=-1)
 
                 log_probs, tokens = torch.topk(prob[-1, :, :], top_k)
@@ -94,7 +91,7 @@ class Model:
                     candidate = seq.clone()
                     candidate[idx, :] = tokens[:, i]
                     log_prob = torch.sum(log_probs[:, i]).item()
-                    if tokens[i, 0] == gp.EOS[0]:
+                    if tokens[i, 0] == v.EOS:
                         done.append((candidate, score + log_prob))
                     else:
                         candidates.append(
@@ -107,18 +104,19 @@ class Model:
 
         return max(done, key=lambda x: x[1])[0] if done else beams[0][0]
 
-    def greedy_decode(self, gp: GrandPiano, source: torch.Tensor) -> torch.Tensor:
+    def greedy_decode(self, source: torch.Tensor) -> torch.Tensor:
+        c, v = self.config, Vocab
         self.model.eval()
-        source_key_padding_mask = (source == GrandPiano.PAD[0])[:, :, 0]
+        source_key_padding_mask = (source == v.PAD)[:, :, 0]
         memory = self.model.encode(
             source,
             src_key_padding_mask=source_key_padding_mask.to(self.device)
         )
         yhat = torch.full(
-            (gp.spad_len, gp.Stats.max_chord), fill_value=GrandPiano.PAD[0]
+            (c.spad_len, c.max_chord), fill_value=v.PAD
         ).to(self.device)
-        yhat[0, :] = GrandPiano.SOS[0]
-        for idx in range(1, gp.spad_len-1):
+        yhat[0, :] = v.SOS
+        for idx in range(1, c.spad_len-1):
             target_mask = self.get_target_mask(idx)
             out = self.model.decode(
                 yhat[:idx, :].unsqueeze(0), memory, target_mask)
@@ -126,47 +124,48 @@ class Model:
             prob = self.model.generator(out[:, -1])
             # As we're not runing through softmax this isn't really a probability,
             # still fine as we're only interested in argmax.
-            prob = prob.view(-1, gp.Stats.max_chord, gp.vocab_size)
+            prob = prob.view(-1, c.max_chord, c.vocab_size)
             token = torch.argmax(prob[-1:, :, :], dim=2)
             yhat[idx, :] = token
-            if token[0, 0] == gp.EOS[0]:
+            if token[0, 0] == v.EOS:
                 break
         return yhat
 
-    def full_decoder(self, gp: GrandPiano, source: torch.Tensor) -> torch.Tensor:
+    def full_decoder(self, source: torch.Tensor) -> torch.Tensor:
+        c, v = self.config, Vocab
         # Let's call it 50 pixels / token; 25% overlap = 256 pixels ~ 5 tokens.
-        chunk_size = int(3 * gp.ipad_len / 4)   # 25% overlap
+        chunk_size = int(3 * c.ipad_shape[1] / 4)   # 25% overlap
         context_window_size = 5
         width = source.size(1)
 
         yhat = torch.full(
-            (2 * gp.spad_len, gp.Stats.max_chord), fill_value=GrandPiano.PAD[0]
+            (2 * c.spad_len, c.max_chord), fill_value=v.PAD
         ).to(self.device)
-        yhat[0, :] = GrandPiano.SOS[0]
+        yhat[0, :] = v.SOS
         yhat_pos = 1
         context_window_start = 0  # Beginning of the context window size
         for offset in range(1 + width // chunk_size):
             start_offset = chunk_size * offset
-            end_offset = min(start_offset + gp.ipad_len, width)
+            end_offset = min(start_offset + c.ipad_shape[1], width)
             print(f"stitch: {start_offset}:{end_offset} yhat_pos: {yhat_pos}")
             chunk = source[:, start_offset:end_offset, :]
-            source_key_padding_mask = (chunk == GrandPiano.PAD[0])[:, :, 0]
+            source_key_padding_mask = (chunk == v.PAD)[:, :, 0]
             memory = self.model.encode(
                 chunk,
                 src_key_padding_mask=source_key_padding_mask.to(self.device)
             )
 
-            while yhat_pos < yhat.size(0) and yhat_pos - context_window_size < gp.spad_len:
+            while yhat_pos < yhat.size(0) and yhat_pos - context_window_size < c.spad_len:
                 target_mask = self.get_target_mask(
                     yhat_pos - context_window_start)
                 out = self.model.decode(
                     yhat[context_window_start:yhat_pos, :].unsqueeze(0), memory, target_mask)
                 out = out.transpose(0, 1)
                 prob = self.model.generator(out[:, -1])
-                prob = prob.view(-1, gp.Stats.max_chord, gp.vocab_size)
+                prob = prob.view(-1, c.max_chord, c.vocab_size)
                 token = torch.argmax(prob[-1:, :, :], dim=2)
                 # Don't add EOS
-                if token[0, 0] == gp.EOS[0]:
+                if token[0, 0] == v.EOS:
                     break
                 yhat[yhat_pos, :] = token
                 yhat_pos += 1
@@ -174,38 +173,24 @@ class Model:
             context_window_start = yhat_pos - context_window_size
 
         # Do add the final EOS.
-        yhat[yhat_pos, :] = gp.EOS[0]
+        yhat[yhat_pos, :] = v.EOS
         return yhat
 
     def predict(
-        self, gp: GrandPiano, source: torch.Tensor, use_beam: bool = False, use_full: bool = False
+        self, source: torch.Tensor, use_beam: bool = False, use_full: bool = False
     ) -> torch.Tensor:
-        """Translated the image given by PATH to kern-like tokens.
-
-        Args:
-            gp (GrandPiano): The dataset, to decode the tokens to string.
-            source (torch.Tensor): Image to decode.
-            use_beam (bool, optional): Use beam decoding rather than greedy. Defaults to False.
-            use_full (bool, optional): Enables decoding of images larger than padding length.
-
-        Returns:
-            The decoded stream of tokens tensor of (width, GrandPiano.Stats.max_chord)
-        """
         self.model.eval()
-        if source is None:
-            raise FileNotFoundError(f"File {path} not found, likely too wide.")
-
         if use_full:
-            yhat = self.full_decoder(gp, source.unsqueeze(0))
+            yhat = self.full_decoder(source.unsqueeze(0))
         elif use_beam:
-            yhat = self.beam_decode(gp, source.unsqueeze(0))
+            yhat = self.beam_decode(source.unsqueeze(0))
         else:
-            yhat = self.greedy_decode(gp, source.unsqueeze(0))
+            yhat = self.greedy_decode(source.unsqueeze(0))
         return yhat
 
 
 @click.command()
-@click.argument("count", type=int)
+@click.argument("count", type=int, default=50)
 @click.option("--use-beam", "use_beam", is_flag=True, default=False,
               help="Use beam decoding rather than greedy.")
 @click.pass_context
@@ -218,15 +203,21 @@ def random_check(ctx, count: int, use_beam: bool):
     """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
-    accuracies: List[float] = []
+    _, valid_ds = context.require_factory().datasets(valid_split=0.15)
+    loader = utils.data.DataLoader(valid_ds, batch_size=1, shuffle=True)
+    client = context.require_client()
+    accuracies: list[float] = []
     with torch.no_grad():
-        for _ in range(count):
-            path, image, _, sequence, _ = context.require_dataset().next("valid", pad=True)
-            yhat = context.require_client().predict(
-                context.require_dataset(), image, use_beam=use_beam)
-            accuracy = compare_sequences(yhat, sequence)
+        for image, seq in loader:
+            image, seq = image.squeeze(0).to(
+                client.device), seq.squeeze(0).to(client.device)
+            yhat = client.predict(image, use_beam=use_beam)
+            accuracy = compare_sequences(yhat, seq)
             accuracies.append(accuracy)
-            print(f"{100.0 * accuracy:<8.2f}{path}")
+            print(f"{100.0 * accuracy:<8.2f}")
+            count -= 1
+            if count <= 0:
+                return
     print(f"Average: {100.0 * sum(accuracies) / len(accuracies):2.2f}")
 
 
@@ -257,42 +248,25 @@ def predict(
     """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
-    gp = context.require_dataset()
+    factory = context.require_factory()
+    client = context.require_client()
+
     path = Path(path)
 
     # Loads both the image and the sequence.
-    def load():
-        target = None
-        source, _ = gp.load_image(path)
-        if source is None:
-            raise FileNotFoundError(
-                f"Sequence for {path} not found, " +
-                "or too wide, consider the --use-full option."
-            )
-        if do_accuracy:
-            target, _ = gp.load_sequence(path.with_suffix(".tokens"))
-            if target is None:
-                raise FileNotFoundError(
-                    f"Sequence for {path.with_suffix(".tokens")} not found, " +
-                    "or too wide, consider the --use-full option."
-                )
-        return source, target
+    source = factory.load_image(path).to(client.device)
+    if do_accuracy:
+        seq = factory.load_sequence(
+            path.with_suffix(".tokens")).to(client.device)
 
-    if use_full:
-        with gp.unfiltered():
-            source, target = load()
-    else:
-        source, target = load()
     with torch.no_grad():
-        yhat = context.require_client().predict(
-            context.require_dataset(), source, use_beam=use_beam, use_full=use_full
-        )
+        yhat = client.predict(source, use_beam=use_beam, use_full=use_full)
         if do_accuracy:
-            assert target is not None, "load() failed to check target wasn't None."
-            accuracy = compare_sequences(yhat, target)
+            assert seq is not None, "load() failed to check target wasn't None."
+            accuracy = compare_sequences(yhat, seq)
             print(f"Accuracy: {100.0 * accuracy:2.2f}")
-        if do_display:
-            gp.display(yhat)
+        # if do_display:
+        #     gp.display(yhat)
 
 
 @click.command()
@@ -314,7 +288,7 @@ def infos(ctx, do_config: bool, do_summary: bool):
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     client = context.require_client()
-    print(f"git hash: {client.git_hash}")
+    print(f"git hash: {client.config.git_hash}")
     print(f"Training samples: {client.training_samples:,}")
     if do_config:
         print("Config:")

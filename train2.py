@@ -11,7 +11,7 @@ import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
 from torch import Tensor, nn, optim, utils
 
-from dataset import Factory, Vocab, init_dataset
+from dataset import Factory, Vocab
 from logger import SimpleLogger, plot
 from model import Config, Translator
 from utils import compare_sequences
@@ -174,11 +174,11 @@ def display(vocab: Vocab, yhat: Tensor, gt: Tensor):
 
 
 @click.command()
-def predict(
+def test(
     home: Path = Path("/home/anselm/datasets/GrandPiano"),
     root: Path = Path("untracked/train")
 ):
-    config = Config.load(root / "config.json")
+    config = Config.create(root / "config.json")
     factory = Factory(home, config)
     _, valid_ds = factory.datasets(valid_split=0.15)
     loader = utils.data.DataLoader(valid_ds)
@@ -207,8 +207,7 @@ def cli():
 
 cli.add_command(train)
 cli.add_command(plot)
-cli.add_command(init_dataset)
-cli.add_command(predict)
+cli.add_command(test)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
