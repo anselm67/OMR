@@ -3,11 +3,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import cast
 
-from utils import from_json
+from utils import current_commit, from_json
 
 
 @dataclass(frozen=True)
 class Config:
+    git_hash: str = current_commit()
+
     # Dataset related configuration, provided by GrandPiano.
     ipad_shape: tuple[int, int] = (256, 1024)
     spad_len: int = 128
