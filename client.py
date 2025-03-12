@@ -10,7 +10,8 @@ from torchinfo import summary
 from config import Config
 from dataset import Vocab
 from model import Translator
-from utils import DeviceType, compare_sequences, current_commit
+from sequence import compare_sequences
+from utils import DeviceType, current_commit
 
 
 class Client:

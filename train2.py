@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
-import logging
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 import click
 import cv2
@@ -11,10 +10,11 @@ import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
 from torch import Tensor, nn, optim, utils
 
-from dataset import Factory, Vocab
-from logger import SimpleLogger, plot
+from dataset import Factory
+from logger import SimpleLogger
 from model import Config, Translator
-from utils import compare_sequences
+from sequence import compare_sequences, display_sequence
+from vocab import Vocab
 
 
 class LitTranslator(L.LightningModule):
@@ -150,29 +150,6 @@ def train(epochs: int):
     trainer.fit(translator, train_loader, valid_loader, ckpt_path=ckpt_path)
 
 
-def chord_repr(vocab: Vocab, chord: Tensor) -> str:
-    # Otherwise, displays anything but PAD.
-    if any([id != Vocab.PAD for id in chord]):
-        texts = vocab.i2tok([
-            int(id.item()) for id in chord if id != Vocab.SIL
-        ])
-        return " ".join([text for text in texts if text])
-    else:
-        return ""
-
-
-def display(vocab: Vocab, yhat: Tensor, gt: Tensor):
-    for chord_hat, chord_gt in zip(yhat, gt):
-        # Skips SOS and EOS.
-        if all([id.item() == Vocab.SOS for id in chord_hat]):
-            continue
-        # if all([id.item() == Vocab.EOS for id in chord]):
-        #     return
-        print(
-            f"{chord_repr(vocab, chord_gt):<40}{chord_repr(vocab, chord_hat)}"
-        )
-
-
 @click.command()
 def test(
     home: Path = Path("/home/anselm/datasets/GrandPiano"),
@@ -194,22 +171,7 @@ def test(
         for image, yhat, gt in zip(images.unbind(0), yhats, gts):
             print("\033[2J\033[H", end="")
             print(f"edist: {compare_sequences(yhat, gt)}")
-            display(factory.vocab, yhat, gt)
+            print(display_sequence(factory.vocab, yhat, gt))
             cv2.imshow("window", image.transpose(1, 0).cpu().numpy())
             if cv2.waitKey(0) == ord('q'):
                 return
-
-
-@click.group()
-def cli():
-    pass
-
-
-cli.add_command(train)
-cli.add_command(plot)
-cli.add_command(test)
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    torch.set_float32_matmul_precision("high")
-    cli()
