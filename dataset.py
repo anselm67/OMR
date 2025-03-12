@@ -1,8 +1,9 @@
+import json
 import logging
 import math
 import os
 import pickle
-from dataclasses import replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Iterable, cast
 
@@ -13,6 +14,7 @@ from torchvision.io import decode_image
 from torchvision.transforms import v2
 
 from config import Config
+from utils import from_json
 
 
 class FixedHeightResize(v2.Transform):
@@ -37,7 +39,7 @@ class Vocab:
     UNK_T = (1, "UNK")        # Unknown sequence token.
     SOS_T = (2, "SOS")        # Start of sequence token.
     EOS_T = (3, "EOS")        # End of sequence token.
-    SIL_T = (4, "SIL")        # Chord padding to Stats.max_chord.
+    SIL_T = (4, "SIL")        # Chord padding to max_chord.
     RESERVED_TOKENS = [PAD_T, UNK_T, SOS_T, EOS_T, SIL_T]
 
     PAD, UNK, SOS, EOS, SIL = map(lambda x: x[0], RESERVED_TOKENS)
@@ -133,12 +135,55 @@ class Dataset(utils.data.Dataset):
         return self._load_image(self.data[idx]), self._load_sequence(self.data[idx])
 
 
+@dataclass
+class Stats:
+    count: int = 0
+
+    ipad_shape: tuple[int, int] = (0, 0)
+    i_mean: float = 0
+    i_std: float = 0
+
+    spad_len: int = 0
+
+    def update(self, img: Tensor, seq: list[str]):
+        self.count += 1
+        # Updates image statistics.
+        self.ipad_shape = (
+            max(img.shape[1], self.ipad_shape[0]),
+            max(img.shape[2], self.ipad_shape[1])
+        )
+        self.i_mean += img.mean().item()
+        self.i_std += img.std().item()
+        # Update sequence statistics.
+        seq_len = len(seq)
+        self.spad_len = max(seq_len, self.spad_len)
+
+    def log(self):
+        logging.info(
+            "Dataset created:\n" +
+            f"ipad_shape    = {self.ipad_shape},\n" +
+            f"i_mean, i_std = {self.i_mean / self.count:.3f}, {self.i_std / self.count:.3f}\n" +
+            f"spad_len      = {self.spad_len}"
+        )
+
+    def save(self, json_path: Path):
+        with open(json_path, "w+") as fp:
+            json.dump(asdict(self), fp, indent=2)
+
+    @classmethod
+    def from_json(cls, json_path) -> 'Stats':
+        with open(json_path, "r") as fp:
+            return cast(Stats, from_json(cls, json.load(fp)))
+
+
 class Factory:
 
     config: Config
     home: Path
     data: list[Path]
     vocab: Vocab
+
+    stats_transforms: v2.Compose
 
     def __init__(self, home: Path, refresh: bool = False):
         """Initializes the dataset.
@@ -155,6 +200,11 @@ class Factory:
         """
         self.config = Config()
         self.home = home
+        self.stats_transforms = v2.Compose([
+            v2.Grayscale(),
+            FixedHeightResize(self.config.ipad_shape[0]),
+            v2.ToDtype(torch.float),
+        ])
         self._load(refresh)
         self._vocab(refresh)
         self.config = replace(self.config, vocab_size=len(self.vocab))
@@ -169,37 +219,40 @@ class Factory:
     def dataset(self):
         return Dataset(self.config, self.vocab, self.data)
 
-    def _accept(self, tokens_path: Path) -> bool:
+    def _accept(self, tokens_path: Path, stats: Stats) -> bool:
         if not tokens_path.with_suffix(".jpg").exists():
             return False
         # Checks the image size after rescaling.
-        _, h, w = decode_image(
-            tokens_path.with_suffix(".jpg").as_posix()).shape
+        img = decode_image(tokens_path.with_suffix(".jpg").as_posix())
+        _, h, w = img.shape
         w = 1 + int(w / (h / self.config.ipad_shape[0]))
         if w + 2 > self.config.ipad_shape[1]:
             return False
         # Checks the sequence length.
         with open(tokens_path, "r") as records:
-            if len(list(records)) > self.config.spad_len:
-                return False
-
+            seq = list(records)
+        if len(seq) > self.config.spad_len:
+            return False
+        stats.update(self.stats_transforms(img), seq)
         return True
 
     def _load(self, refresh: bool):
         pkl_path = Path(self.home) / 'data.pkl'
         if refresh or not pkl_path.exists():
             logging.info("Creating data set.")
+            stats = Stats()
             self.data = []
             for root, _, names in os.walk(self.home):
                 for name in names:
                     path = Path(root) / name
                     if path.suffix == '.tokens':
-                        if self._accept(path):
+                        if self._accept(path, stats):
                             self.data.append(path.with_suffix(""))
                         else:
                             logging.info(f"{path} rejected (too large).")
             with open(pkl_path, "wb+") as f:
                 pickle.dump(self.data, f)
+            stats.save(pkl_path.with_name("stats.json"))
         else:
             logging.info(f"Loading data set from {pkl_path}.")
             with open(pkl_path, "rb") as f:
@@ -232,8 +285,4 @@ class Factory:
 def init_dataset(home: Path):
     factory = Factory(Path(home))
     dataset = factory.dataset()
-    loader = utils.data.DataLoader(dataset, batch_size=16)
-    count = 0
-    for images, _ in loader:
-        count += len(images)
-    logging.info(f"{home} inited - {count:,} samples.")
+    logging.info(f"{home} inited - {len(dataset):,} samples.")
