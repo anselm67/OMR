@@ -112,6 +112,7 @@ class LitTranslator(L.LightningModule):
 def train(epochs: int):
     home = Path("/home/anselm/datasets/GrandPiano")
     root = Path("untracked/train")
+    root.mkdir(exist_ok=True, parents=True)
 
     factory = Factory(home)
     config = factory.config
