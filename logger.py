@@ -23,7 +23,13 @@ class SimpleLogger(Logger):
         super().__init__()
         self.log_path = log_path
         self._name = name
-        self.metrics = {}
+        self._load_if_exists()
+
+    def _load_if_exists(self):
+        self.metrics = dict()
+        if self.log_path.exists():
+            with open(self.log_path, "r") as fp:
+                self.metrics = json.load(fp)
 
     @property
     def name(self) -> str:
