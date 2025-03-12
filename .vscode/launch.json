@@ -33,11 +33,11 @@
                 // "make-vocab"
                 // "stats"
                 // "-n", "test", "train", "1"
-                // "-n", "serious", "random-check", "--no-display", "50"
+                "-n", "heavy", "random-check", "50"
                 // "-n", "heavy", "predict", "--use-beam", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
                 // "-n", "heavy", "predict", "--use-full", "/home/anselm/Downloads/GrandPiano/mozart/piano-sonatas/sonata01-1/maj2_up_m-51-56.jpg"
                 // "-n", "serious", "random-check", "--no-display", "100"
-                "tokenize", "/home/anselm/datasets/kern-sheet/mozart/piano/sonata/sonata06-3e.krn"
+                // "tokenize", "/home/anselm/datasets/kern-sheet/mozart/piano/sonata/sonata06-3e.krn"
                 // "kern-stats", "/home/anselm/Downloads/KernSheet"
             ]
         },
@@ -48,7 +48,9 @@
             "program": "train2.py",
             "console": "integratedTerminal",
             "args": [
-                "init-dataset"
+                // "init-dataset"
+                "predict"
+                // "train"
             ]
         }
     ]
