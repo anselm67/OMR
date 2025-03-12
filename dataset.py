@@ -123,10 +123,11 @@ class Dataset(utils.data.Dataset):
         assert width + 2 <= ipad_len and height == ipad_height, \
             f"{path} exceeds pad length {ipad_len} or height mismatches."
         tensor = torch.full(
-            (ipad_len - 2, height), v.PAD, dtype=torch.float32
+            (ipad_len - 1, height), v.PAD, dtype=torch.float32
         )
         tensor[:width, :] = image
-        return torch.cat([self.i_sos, tensor, self.i_eos])
+        tensor[width, :] = self.i_eos
+        return torch.cat([self.i_sos, tensor])
 
     def __len__(self):
         return len(self.data)
@@ -185,7 +186,7 @@ class Factory:
 
     stats_transforms: v2.Compose
 
-    def __init__(self, home: Path, refresh: bool = False):
+    def __init__(self, home: Path, config: None | Config = None, refresh: bool = False):
         """Initializes the dataset.
 
         Given a freshly unzipped GrandPiano dataset in the HOME directory,
@@ -198,8 +199,8 @@ class Factory:
             home (Path): The directory containing the raw GrandPiano dataset.
             force (bool): Recreates both the list and vocab files even if they exist.
         """
-        self.config = Config()
         self.home = home
+        self.config = config or Config()
         self.stats_transforms = v2.Compose([
             v2.Grayscale(),
             FixedHeightResize(self.config.ipad_shape[0]),
