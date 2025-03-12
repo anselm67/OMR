@@ -112,11 +112,20 @@ class LitTranslator(L.LightningModule):
 def train(epochs: int):
     home = Path("/home/anselm/datasets/GrandPiano")
     root = Path("untracked/train")
-    root.mkdir(exist_ok=True, parents=True)
 
-    factory = Factory(home)
-    config = factory.config
-    config.save(root / "config.json")
+    # Checks if we're resuming or starting from fresh.
+    if root.exists() and (root / "config.json").exists():
+        config = Config.load(root / "config.json")
+        factory = Factory(home, config)
+        ckpt_path = "last"
+        logging.info("Resuming training from existing root.")
+    else:
+        root.mkdir(exist_ok=True, parents=True)
+        config = Config()
+        factory = Factory(home, config)
+        ckpt_path = None
+        config.save(root / "config.json")
+        logging.info("Creating fresh training root.")
 
     # Prepares the train and valid loaders.
     train_ds, valid_ds = factory.datasets(valid_split=0.15)
@@ -138,7 +147,7 @@ def train(epochs: int):
             ModelCheckpoint(dirpath=root, save_last=True)
         ]
     )
-    trainer.fit(translator, train_loader, valid_loader)
+    trainer.fit(translator, train_loader, valid_loader, ckpt_path=ckpt_path)
 
 
 def chord_repr(vocab: Vocab, chord: Tensor) -> str:

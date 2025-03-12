@@ -49,8 +49,8 @@
             "console": "integratedTerminal",
             "args": [
                 // "init-dataset"
-                "predict"
-                // "train"
+                // "predict"
+                "train"
             ]
         }
     ]

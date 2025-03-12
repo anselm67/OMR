@@ -186,7 +186,7 @@ class Factory:
 
     stats_transforms: v2.Compose
 
-    def __init__(self, home: Path, config: None | Config = None, refresh: bool = False):
+    def __init__(self, home: Path, config: Config, refresh: bool = False):
         """Initializes the dataset.
 
         Given a freshly unzipped GrandPiano dataset in the HOME directory,
