@@ -10,7 +10,7 @@ from torchinfo import summary
 from config import Config
 from dataset import Vocab
 from model import Translator
-from sequence import compare_sequences
+from sequence import compare_sequences, display_sequence
 from utils import DeviceType, current_commit
 
 
@@ -266,8 +266,8 @@ def predict(
             assert seq is not None, "load() failed to check target wasn't None."
             accuracy = compare_sequences(yhat, seq)
             print(f"Accuracy: {100.0 * accuracy:2.2f}")
-        # if do_display:
-        #     gp.display(yhat)
+        if do_display:
+            print(display_sequence(factory.vocab, yhat))
 
 
 @click.command()
