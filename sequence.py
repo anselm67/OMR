@@ -51,11 +51,12 @@ def display_sequence(vocab: Vocab, yhat: Tensor, gt: None | Tensor = None) -> st
 
 
 def compare_sequences(yhat: Tensor, y: Tensor) -> float:
-    from grandpiano import GrandPiano
+    assert yhat.size(1) == y.size(1), \
+        f"Expecting same chord size {yhat.shape[1]} vs {y.shape[1]}"
     if yhat.size(0) != y.size(0):
         padded = torch.full(
-            (max(yhat.size(0), y.size(0)), GrandPiano.Stats.max_chord),
-            fill_value=GrandPiano.PAD[0])
+            (max(yhat.size(0), y.size(0)), yhat.size(1)),
+            fill_value=Vocab.PAD)
         if yhat.size(0) > y.size(0):
             padded[0:y.size(0), :] = y
             y = padded.to(y.device)
@@ -63,5 +64,5 @@ def compare_sequences(yhat: Tensor, y: Tensor) -> float:
             padded[0:yhat.size(0), :] = yhat
             yhat = padded.to(yhat.device)
     wrong = torch.sum(y != yhat).item()
-    total = torch.sum(y != GrandPiano.PAD[0]).item()
+    total = torch.sum(y != Vocab.PAD).item()
     return 1.0 - wrong / total
