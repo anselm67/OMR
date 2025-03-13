@@ -38,7 +38,7 @@
                 // "tokenize", "/home/anselm/datasets/kern-sheet/mozart/piano/sonata/sonata06-3e.krn"
                 // "kern-stats", "/home/anselm/Downloads/KernSheet"
                 // "random-check"
-                "test"
+                "-m", "untracked/eos", "train"
             ]
         }
     ]

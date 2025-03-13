@@ -1,3 +1,5 @@
+import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -25,6 +27,20 @@ class ClickContext:
         # We always have a config, no matter what.
         self.config = Config.create(self.model_directory / "config.json")
 
+    def require_model(self) -> LitTranslator:
+        if self.model_directory is None:
+            raise FileNotFoundError("No model directory, no model.")
+        if self.model_directory.exists():
+            logging.info(f"Reusing model in {self.model_directory.name}")
+            return LitTranslator(self.config)
+        else:
+            logging.info(f"Creating model in {self.model_directory.name}")
+            factory = self.require_factory()
+            self.config = replace(self.config, vocab_size=len(factory.vocab))
+            self.model_directory.mkdir(parents=True, exist_ok=True)
+            self.config.save(self.model_directory / "config.json")
+            return LitTranslator(self.config)
+
     def require_factory(self) -> Factory:
         if self.factory is None:
             if self.dataset_directory is None:
@@ -37,3 +53,8 @@ class ClickContext:
             self.client = Client(
                 self.config, self.model_directory / "last.ckpt")
         return self.client
+
+    def require_logger(self) -> SimpleLogger:
+        if self.model_directory is None:
+            raise FileNotFoundError("No model directory, no logger.")
+        return SimpleLogger(self.model_directory / "train_logs.json")

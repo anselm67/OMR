@@ -110,23 +110,14 @@ class LitTranslator(L.LightningModule):
 
 @click.command()
 @click.option("epochs", "-e", type=int, default=32)
-def train(epochs: int):
-    home = Path("/home/anselm/datasets/GrandPiano")
-    root = Path("untracked/train")
+@click.pass_context
+def train(ctx, epochs: int):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    factory = context.require_factory()
+    config = factory.config
 
-    # Checks if we're resuming or starting from fresh.
-    if root.exists() and (root / "config.json").exists():
-        config = Config.create(root / "config.json")
-        factory = Factory(home, config)
-        ckpt_path = "last"
-        logging.info("Resuming training from existing root.")
-    else:
-        root.mkdir(exist_ok=True, parents=True)
-        config = Config()
-        factory = Factory(home, config)
-        ckpt_path = None
-        config.save(root / "config.json")
-        logging.info("Creating fresh training root.")
+    translator = context.require_model()
 
     # Prepares the train and valid loaders.
     train_ds, valid_ds = factory.datasets(valid_split=0.15)
@@ -138,17 +129,22 @@ def train(epochs: int):
     )
 
     # Prepares the trainer.
-    translator = LitTranslator(config)
     trainer = L.Trainer(
-        default_root_dir=root,
+        default_root_dir=context.model_directory,
         max_epochs=epochs, limit_val_batches=10,
-        logger=SimpleLogger(root / "train_logs.json", "train"),
+        logger=context.require_logger(),
         log_every_n_steps=25,
         callbacks=[
-            ModelCheckpoint(dirpath=root, save_last=True)
+            ModelCheckpoint(dirpath=context.model_directory, save_last=True)
         ]
     )
-    trainer.fit(translator, train_loader, valid_loader, ckpt_path=ckpt_path)
+    ckpt_path = "last" if (context.model_directory /
+                           "last.ckpt").exists() else None
+    trainer.fit(
+        translator,
+        train_loader, valid_loader,
+        ckpt_path=ckpt_path
+    )
 
 
 @click.command()
@@ -164,7 +160,7 @@ def test(
         root / "last.ckpt", config=config)
     trainer = L.Trainer(
         default_root_dir=root,
-        logger=SimpleLogger(root / "predict_logs.json", "predict"),
+        logger=SimpleLogger(root / "predict_logs.json"),
     )
 
     for images, gts in loader:

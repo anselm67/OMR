@@ -2,7 +2,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 import matplotlib.pyplot as plt
@@ -19,7 +19,7 @@ class SimpleLogger(Logger):
     metrics: dict[str, list[tuple[int, float]]]
     _name: str
 
-    def __init__(self, log_path: Path, name: str):
+    def __init__(self, log_path: Path, name: str = "logger-name"):
         super().__init__()
         self.log_path = log_path
         self._name = name
@@ -30,6 +30,10 @@ class SimpleLogger(Logger):
         if self.log_path.exists():
             with open(self.log_path, "r") as fp:
                 self.metrics = json.load(fp)
+
+    def reload(self) -> dict[str, list[tuple[int, float]]]:
+        self._load_if_exists()
+        return self.metrics
 
     @property
     def name(self) -> str:
@@ -63,17 +67,15 @@ def moving_average(y: NDArray[np.float32], window_size: int = 10) -> NDArray[np.
 
 
 @click.command()
-@click.argument("log_path",
-                type=click.Path(file_okay=True, dir_okay=False, exists=True))
 @click.option("--smooth/--no-smooth", default=True,
               help="Smooth the curves before plotting them.")
 @click.option("--hide", "-h", multiple=True, type=str,
               help="Hide metric from plot, multiple allowed.")
-def plot(log_path: Path, hide: list[str], smooth: bool = True):
-
-    def load() -> dict[str, list[tuple[int, float]]]:
-        with open(log_path, "r") as fp:
-            return json.load(fp)
+@click.pass_context
+def plot(ctx, hide: list[str], smooth: bool = True):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    logger = context.require_logger()
 
     # State and function to quit the tracking loop.
     quit: bool = False
@@ -90,7 +92,7 @@ def plot(log_path: Path, hide: list[str], smooth: bool = True):
 
     while not quit:
 
-        metrics = load()
+        metrics = logger.reload()
         for key, metric in metrics.items():
             if key in hide:
                 continue
