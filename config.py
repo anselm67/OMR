@@ -38,7 +38,7 @@ class Config:
             json.dump(asdict(self), fp, indent=2)
 
     @classmethod
-    def create(cls, path: Path) -> 'Config':
+    def create(cls, path: None | Path = None) -> 'Config':
         """Loads or creates a config.
 
         Args:
@@ -47,6 +47,9 @@ class Config:
         Returns:
             Config: _description_
         """
-        with open(path, "r") as fp:
-            obj = json.load(fp)
-        return cast(Config, from_json(cls, obj))
+        if path is None or not path.exists():
+            return Config()
+        else:
+            with open(path, "r") as fp:
+                obj = json.load(fp)
+            return cast(Config, from_json(cls, obj))

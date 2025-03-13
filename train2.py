@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import logging
 from pathlib import Path
 from typing import cast
 
@@ -115,7 +116,7 @@ def train(epochs: int):
 
     # Checks if we're resuming or starting from fresh.
     if root.exists() and (root / "config.json").exists():
-        config = Config.load(root / "config.json")
+        config = Config.create(root / "config.json")
         factory = Factory(home, config)
         ckpt_path = "last"
         logging.info("Resuming training from existing root.")

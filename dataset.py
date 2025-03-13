@@ -266,7 +266,10 @@ class Factory:
 @click.argument("home",
                 type=click.Path(file_okay=False, dir_okay=True, exists=True),
                 default=Path("/home/anselm/datasets/GrandPiano"))
-def init_dataset(home: Path):
-    factory = Factory(Path(home))
+@click.pass_context
+def init_dataset(ctx, home: Path):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx)
+    factory = Factory(Path(home), context.config)
     dataset = factory.dataset()
     logging.info(f"{home} inited - {len(dataset):,} samples.")
