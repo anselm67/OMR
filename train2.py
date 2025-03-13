@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
 import contextlib
-import logging
-from pathlib import Path
 from typing import Literal, cast
 
 import click
@@ -12,7 +10,6 @@ import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
 from torch import Tensor, nn, optim, utils
 
-from dataset import Factory
 from logger import SimpleLogger
 from model import Config, Translator
 from sequence import compare_sequences, display_sequence
@@ -168,7 +165,11 @@ def train(ctx, epochs: int):
     factory = context.require_factory()
     config = factory.config
 
-    translator = context.require_model()
+    model, trainer = context.require_trainer(
+        max_epochs=epochs,
+        limit_val_batches=10,
+        log_every_n_steps=25,
+    )
 
     # Prepares the train and valid loaders.
     train_ds, valid_ds = factory.datasets(valid_split=0.15)
@@ -179,43 +180,29 @@ def train(ctx, epochs: int):
         valid_ds, num_workers=8, batch_size=config.batch_size
     )
 
-    # Prepares the trainer.
-    trainer = L.Trainer(
-        default_root_dir=context.model_directory,
-        max_epochs=epochs, limit_val_batches=10,
-        logger=context.require_logger(),
-        log_every_n_steps=25,
-        callbacks=[
-            ModelCheckpoint(dirpath=context.model_directory, save_last=True)
-        ]
-    )
     ckpt_path = "last" if (context.model_directory /
                            "last.ckpt").exists() else None
     trainer.fit(
-        translator,
+        model,
         train_loader, valid_loader,
         ckpt_path=ckpt_path
     )
 
 
 @click.command()
-def test(
-    home: Path = Path("/home/anselm/datasets/GrandPiano"),
-    root: Path = Path("untracked/train")
-):
-    config = Config.create(root / "config.json")
-    factory = Factory(home, config)
+@click.pass_context
+def test(ctx):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    factory = context.require_factory()
+
     _, valid_ds = factory.datasets(valid_split=0.15)
     loader = utils.data.DataLoader(valid_ds)
-    model = LitTranslator.load_from_checkpoint(
-        root / "last.ckpt", config=config)
-    trainer = L.Trainer(
-        default_root_dir=root,
-        logger=SimpleLogger(root / "predict_logs.json"),
-    )
+
+    model, trainer = context.require_model()
 
     for images, gts in loader:
-        with model.use("beam"):
+        with model.use("greedy"):
             yhats = cast(list[Tensor], trainer.predict(model, images))
 
         for image, yhat, gt in zip(images.unbind(0), yhats, gts):

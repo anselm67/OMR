@@ -3,6 +3,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
+import lightning as L
+
 from client import Client
 from dataset import Factory
 from logger import SimpleLogger
@@ -27,19 +29,37 @@ class ClickContext:
         # We always have a config, no matter what.
         self.config = Config.create(self.model_directory / "config.json")
 
-    def require_model(self) -> LitTranslator:
+    def require_trainer(self, **kwargs) -> tuple[LitTranslator, L.Trainer]:
         if self.model_directory is None:
             raise FileNotFoundError("No model directory, no model.")
         if self.model_directory.exists():
             logging.info(f"Reusing model in {self.model_directory.name}")
-            return LitTranslator(self.config)
+            model = LitTranslator(self.config)
         else:
             logging.info(f"Creating model in {self.model_directory.name}")
             factory = self.require_factory()
             self.config = replace(self.config, vocab_size=len(factory.vocab))
             self.model_directory.mkdir(parents=True, exist_ok=True)
             self.config.save(self.model_directory / "config.json")
-            return LitTranslator(self.config)
+            model = LitTranslator(self.config)
+        trainer = L.Trainer(
+            default_root_dir=self.model_directory,
+            logger=SimpleLogger(self.model_directory / "train_logs.json"),
+            **kwargs
+        )
+        return model, trainer
+
+    def require_model(self) -> tuple[LitTranslator, L.Trainer]:
+        if self.model_directory is None:
+            raise FileNotFoundError("No model directory, no model.")
+        model = LitTranslator.load_from_checkpoint(
+            self.model_directory / "last.ckpt", config=self.config
+        )
+        trainer = L.Trainer(
+            default_root_dir=self.model_directory,
+            logger=SimpleLogger(self.model_directory / "predict_logs.json")
+        )
+        return model, trainer
 
     def require_factory(self) -> Factory:
         if self.factory is None:
