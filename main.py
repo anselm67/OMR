@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import logging
 from pathlib import Path
 
 import click
+import torch
 
 from click_context import ClickContext
 from client import infos, predict, random_check
@@ -46,4 +48,6 @@ cli.add_command(tokenize)
 cli.add_command(kern_stats)
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
+    torch.set_float32_matmul_precision('high')
     cli()
