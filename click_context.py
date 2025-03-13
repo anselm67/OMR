@@ -44,7 +44,7 @@ class ClickContext:
     def require_factory(self) -> Factory:
         if self.factory is None:
             if self.dataset_directory is None:
-                raise ValueError(f"A path to the GrandPiano is required.")
+                raise ValueError(f"A path to the dataset is required.")
             self.factory = Factory(self.dataset_directory, self.config)
         return self.factory
 
