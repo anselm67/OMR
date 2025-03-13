@@ -70,11 +70,12 @@ class Dataset(utils.data.Dataset):
             assert width + 2 <= c.spad_len, \
                 f"{path} exceeds pad length {c.spad_len}"
             tensor = torch.full(
-                (c.spad_len - 2, c.max_chord), v.PAD, dtype=torch.int32
+                (c.spad_len - 1, c.max_chord), v.PAD, dtype=torch.int32
             )
-            for idx, record in enumerate(records):
-                tensor[idx, :] = v.tok2i(record.strip().split())
-        return torch.cat([self.s_sos, tensor, self.s_eos])
+            for idx, r in enumerate(records):
+                tensor[idx, :] = v.tok2i(r.strip().split())
+            tensor[width, :] = self.s_eos
+        return torch.cat([self.s_sos, tensor])
 
     def _load_image(self, path: Path) -> Tensor:
         c, v = self.config, self.vocab
