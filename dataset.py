@@ -5,7 +5,7 @@ import os
 import pickle
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
-from typing import Iterable, cast
+from typing import cast
 
 import click
 import torch
