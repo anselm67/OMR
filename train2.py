@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
+import contextlib
 import logging
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 import click
 import cv2
@@ -24,28 +25,25 @@ class LitTranslator(L.LightningModule):
     model: Translator
     loss_fn: nn.CrossEntropyLoss
 
+    _decoding_method: Literal["greedy", "beam"] = "greedy"
+
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
         self.model = Translator(config)
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=Vocab.PAD)
 
-    target_mask_cache: dict[int, Tensor] = {}
-
-    def get_target_mask(self, size: int) -> Tensor:
-        mask = self.target_mask_cache.get(size, None)
-        if mask is None:
-            mask = torch.triu(
-                torch.ones(size, size), diagonal=1).to(torch.bool).to(self.device)
-            self.target_mask_cache[size] = mask
-        return mask
+    def _get_target_mask(self, size: int) -> Tensor:
+        return torch.triu(
+            torch.ones(size, size), diagonal=1
+        ).to(torch.bool).to(self.device)
 
     def training_step(self, batch: tuple[Tensor, Tensor], batch_idx: int) -> Tensor:
         X, y = batch
 
         y_input = y[:, :-1, :]
         y_expected = y[:, 1:, :]
-        target_mask = self.get_target_mask(y_input.shape[1])
+        target_mask = self._get_target_mask(y_input.shape[1])
 
         logits = self.model(X, y_input, target_mask)
 
@@ -63,7 +61,7 @@ class LitTranslator(L.LightningModule):
 
         y_input = y[:, :-1, :]
         y_expected = y[:, 1:, :]
-        target_mask = self.get_target_mask(y_input.shape[1])
+        target_mask = self._get_target_mask(y_input.shape[1])
 
         logits = self.model(X, y_input, target_mask)
 
@@ -80,32 +78,85 @@ class LitTranslator(L.LightningModule):
             lr=0.0001, betas=(0.9, 0.98), eps=1e-9
         )
 
-    def predict_step(self, source: Tensor) -> Tensor:
-        c = self.config
-        source = source.unsqueeze(0)
-        source_key_padding_mask = (source == Vocab.PAD)[:, :, 0]
+    def _init_sequence(self, source: Tensor) -> tuple[Tensor, Tensor]:
+        c, v = self.config, Vocab
+        source_key_padding_mask = (source == v.PAD)[:, :, 0]
         memory = self.model.encode(
             source,
             src_key_padding_mask=source_key_padding_mask.to(self.device)
         )
-        yhat = torch.full(
-            (c.spad_len, c.max_chord), fill_value=Vocab.PAD
+        seq = torch.full(
+            (c.spad_len, c.max_chord), fill_value=v.PAD
         ).to(self.device)
-        yhat[0, :] = Vocab.SOS
+        seq[0, :] = v.SOS
+        return memory, seq
+
+    def _logits(self, c: Config, memory: Tensor, input: Tensor, idx: int) -> Tensor:
+        target_mask = self._get_target_mask(idx)
+        out = self.model.decode(
+            input[:idx, :].unsqueeze(0), memory, target_mask)
+        out = out.transpose(0, 1)
+        out = self.model.generator(out[:, -1])
+        out = out.view(-1, c.max_chord, c.vocab_size)
+        return out
+
+    def _greedy_decode(self, source: Tensor) -> Tensor:
+        c, v = self.config, Vocab
+        memory, seq = self._init_sequence(source.unsqueeze(0))
         for idx in range(1, c.spad_len-1):
-            target_mask = self.get_target_mask(idx)
-            out = self.model.decode(
-                yhat[:idx, :].unsqueeze(0), memory, target_mask)
-            out = out.transpose(0, 1)
-            prob = self.model.generator(out[:, -1])
-            # As we're not runing through softmax this isn't really a probability,
-            # still fine as we're only interested in argmax.
-            prob = prob.view(-1, c.max_chord, c.vocab_size)
-            token = torch.argmax(prob[-1:, :, :], dim=2)
-            yhat[idx, :] = token
-            if token[0, 0] == Vocab.EOS:
+            logits = self._logits(c, memory, seq, idx)
+            token = torch.argmax(logits[-1:, :, :], dim=2)
+            seq[idx, :] = token
+            if token[0, 0] == v.EOS:
                 break
-        return yhat
+        return seq
+
+    def _beam_decode(self, source: Tensor) -> Tensor:
+        c, v = self.config, Vocab
+        memory, seq = self._init_sequence(source.unsqueeze(0))
+
+        top_k = 3
+        beam_width = 6
+        beams: list[tuple[Tensor, float]] = [(seq, 0.0)]
+        done:  list[tuple[Tensor, float]] = []
+        for idx in range(1, c.spad_len-1):
+            candidates:  list[tuple[Tensor, float]] = []
+
+            for seq, score in beams:
+                logits = self._logits(c, memory, seq, idx)
+                prob = torch.nn.functional.log_softmax(logits, dim=-1)
+
+                log_probs, tokens = torch.topk(prob[-1, :, :], top_k)
+                for i in range(top_k):
+                    candidate = seq.clone()
+                    candidate[idx, :] = tokens[:, i]
+                    log_prob = torch.sum(log_probs[:, i]).item()
+                    if tokens[i, 0] == v.EOS:
+                        done.append((candidate, score + log_prob))
+                    else:
+                        candidates.append(
+                            (candidate, score + log_prob))
+            beams = sorted(candidates, key=lambda x: x[1], reverse=True)
+            beams = beams[:beam_width]
+
+            if len(done) >= beam_width:
+                break
+
+        return max(done, key=lambda x: x[1])[0] if done else beams[0][0]
+
+    @contextlib.contextmanager
+    def use(self, decoding_method: Literal["beam", "greedy"]):
+        method = self._decoding_method
+        self._decoding_method = decoding_method
+        yield
+        self._decoding_method = method
+
+    def predict_step(self, source: Tensor) -> Tensor:
+        match self._decoding_method:
+            case "beam":
+                return self._beam_decode(source)
+            case "greedy":
+                return self._greedy_decode(source)
 
 
 @click.command()
@@ -164,7 +215,9 @@ def test(
     )
 
     for images, gts in loader:
-        yhats = cast(list[Tensor], trainer.predict(model, images))
+        with model.use("beam"):
+            yhats = cast(list[Tensor], trainer.predict(model, images))
+
         for image, yhat, gt in zip(images.unbind(0), yhats, gts):
             print("\033[2J\033[H", end="")
             print(f"edist: {compare_sequences(yhat, gt)}")
