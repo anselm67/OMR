@@ -178,7 +178,7 @@ class LitTranslator(L.LightningModule):
 
 @click.command()
 @click.option("epochs", "-e",
-              type=int, default=32,
+              type=int, default=64,
               help="Number of epochs to train the model for.")
 @click.pass_context
 def train(ctx, epochs: int):
