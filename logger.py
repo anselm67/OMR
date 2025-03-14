@@ -63,6 +63,8 @@ class SimpleLogger(Logger):
 
 
 def moving_average(y: NDArray[np.float32], window_size: int = 10) -> NDArray[np.float32]:
+    if len(y) < window_size:
+        return y
     return np.convolve(y, np.ones(window_size) / window_size, mode='valid')
 
 
@@ -73,6 +75,12 @@ def moving_average(y: NDArray[np.float32], window_size: int = 10) -> NDArray[np.
               help="Hide metric from plot, multiple allowed.")
 @click.pass_context
 def plot(ctx, hide: list[str], smooth: bool = True):
+    """Plots the selected model training log metrics.
+
+    Args:
+        hide (list[str]): Don't plot these metrics.
+        smooth (bool, optional): Smoothes the curves before plotting them.
+    """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     logger = context.require_logger()

@@ -177,9 +177,20 @@ class LitTranslator(L.LightningModule):
 
 
 @click.command()
-@click.option("epochs", "-e", type=int, default=32)
+@click.option("epochs", "-e",
+              type=int, default=32,
+              help="Number of epochs to train the model for.")
 @click.pass_context
 def train(ctx, epochs: int):
+    """Trains the model for the given number of epochs.
+
+    The selected model is trained until the given number of epochs
+    have been run. The model is created if it doesn't exist, otherwise
+    it's training is resumed from the last checkpoint found.
+
+    Args:
+        epochs (int): Number of epochs to train the modl for.
+    """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     factory = context.require_factory()
@@ -218,6 +229,16 @@ def train(ctx, epochs: int):
 )
 @click.pass_context
 def test(ctx, use_decoding: Literal["beam", "greedy"]):
+    """Tests the model against a random sample of the validation set.
+
+    Tests the model by running random samples from the validation set. Displays
+    the original image and the decoded sequence for each sample.
+
+    Type 'q' to exit the test.
+
+    Args:
+        use_decoding (Literal[&quot;beam&quot;, &quot;greedy&quot;]): Decoding method to use.
+    """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     factory = context.require_factory()
@@ -299,6 +320,11 @@ def predict(
 )
 @click.pass_context
 def summary(ctx, verbose: int):
+    """Displays a summary of the selected model.
+
+    Args:
+        verbose (int): Verbosity of the description.
+    """
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     model = context.require_model()
