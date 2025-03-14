@@ -7,10 +7,10 @@ import click
 import torch
 
 from click_context import ClickContext
-from dataset import init_dataset
+from dataset import init_dataset, show
 from logger import plot
 from tokenizer import kern_stats, tokenize
-from train import predict, test, train, summary
+from train import predict, summary, test, train
 
 
 @click.group
@@ -31,6 +31,7 @@ def cli(
 
 # dataset dataset commands:
 cli.add_command(init_dataset)
+cli.add_command(show)
 
 # Training commands:
 cli.add_command(train)

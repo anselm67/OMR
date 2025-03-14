@@ -14,6 +14,7 @@ from torchvision.io import decode_image
 from torchvision.transforms import v2
 
 from config import Config
+from sequence import display_sequence
 from utils import from_json
 from vocab import Vocab
 
@@ -270,7 +271,25 @@ class Factory:
 @click.pass_context
 def init_dataset(ctx, home: Path):
     from click_context import ClickContext
-    context = cast(ClickContext, ctx)
+    context = cast(ClickContext, ctx.obj)
     factory = Factory(Path(home), context.config)
     dataset = factory.dataset()
     logging.info(f"{home} inited - {len(dataset):,} samples.")
+
+
+@click.command()
+@click.pass_context
+def show(ctx):
+    import cv2
+
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    factory = context.require_factory()
+    dataset = factory.dataset()
+    loader = utils.data.DataLoader(dataset, batch_size=1, shuffle=True)
+    for image, seq in loader:
+        image, seq = image.squeeze(0), seq.squeeze(0)
+        print(display_sequence(factory.vocab, seq))
+        cv2.imshow("score", image.permute(1, 0).cpu().numpy())
+        if cv2.waitKey(0) == ord('q'):
+            return
