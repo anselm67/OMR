@@ -8,7 +8,7 @@ import lightning as L
 from dataset import Factory
 from logger import SimpleLogger
 from model import Config
-from train2 import LitTranslator
+from train import LitTranslator
 
 
 class ClickContext:

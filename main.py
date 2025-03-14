@@ -10,7 +10,7 @@ from click_context import ClickContext
 from dataset import init_dataset
 from logger import plot
 from tokenizer import kern_stats, tokenize
-from train2 import predict, test, train, summary
+from train import predict, test, train, summary
 
 
 @click.group
