@@ -14,7 +14,7 @@ def display_sequence(vocab: Vocab, yhat: Tensor, gt: None | Tensor = None) -> st
         # Otherwise, displays anything but PAD.
         if any([id != Vocab.PAD for id in chord]):
             texts = vocab.i2tok([
-                int(id.item()) for id in chord if id != Vocab.SIL
+                int(id.item()) for id in chord if id != Vocab.SIL and id != Vocab.EOS
             ])
             return " ".join([text for text in texts if text])
         else:
@@ -46,7 +46,10 @@ def display_sequence(vocab: Vocab, yhat: Tensor, gt: None | Tensor = None) -> st
             s_gt = chord_repr(vocab, chord_gt)
             s_hat = chord_repr(vocab, chord_hat)
             if s_gt or s_hat:
-                buffer.write(f"{s_gt:<40}{s_hat}\n")
+                if s_gt != s_hat:
+                    buffer.write("\033[31m" f"{s_gt:<40}{s_hat}" "\033[0m\n")
+                else:
+                    buffer.write(f"{s_gt:<40}{s_hat}\n")
 
     return buffer.getvalue()
 
