@@ -7,11 +7,10 @@ import click
 import torch
 
 from click_context import ClickContext
-from client import infos, predict, random_check
 from dataset import init_dataset
 from logger import plot
 from tokenizer import kern_stats, tokenize
-from train2 import test, train
+from train2 import predict, test, train, summary
 
 
 @click.group
@@ -35,13 +34,12 @@ cli.add_command(init_dataset)
 
 # Training commands:
 cli.add_command(train)
-cli.add_command(test)
 cli.add_command(plot)
 
 # Client commands:
-cli.add_command(infos)
 cli.add_command(predict)
-cli.add_command(random_check)
+cli.add_command(test)
+cli.add_command(summary)
 
 # kernnom / aka tokenizer commands.
 cli.add_command(tokenize)

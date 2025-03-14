@@ -5,7 +5,6 @@ from typing import Optional
 
 import lightning as L
 
-from client import Client
 from dataset import Factory
 from logger import SimpleLogger
 from model import Config
@@ -21,7 +20,6 @@ class ClickContext:
 
     factory: Optional[Factory] = None
     lit_model: Optional[LitTranslator] = None
-    client: Optional[Client] = None
 
     def __init__(self, dataset_directory: Path, model_directory: Path):
         self.dataset_directory = dataset_directory
@@ -49,17 +47,13 @@ class ClickContext:
         )
         return model, trainer
 
-    def require_model(self) -> tuple[LitTranslator, L.Trainer]:
+    def require_model(self) -> LitTranslator:
         if self.model_directory is None:
             raise FileNotFoundError("No model directory, no model.")
         model = LitTranslator.load_from_checkpoint(
             self.model_directory / "last.ckpt", config=self.config
         )
-        trainer = L.Trainer(
-            default_root_dir=self.model_directory,
-            logger=SimpleLogger(self.model_directory / "predict_logs.json")
-        )
-        return model, trainer
+        return model
 
     def require_factory(self) -> Factory:
         if self.factory is None:
@@ -67,12 +61,6 @@ class ClickContext:
                 raise ValueError(f"A path to the dataset is required.")
             self.factory = Factory(self.dataset_directory, self.config)
         return self.factory
-
-    def require_client(self) -> Client:
-        if self.client is None:
-            self.client = Client(
-                self.config, self.model_directory / "last.ckpt")
-        return self.client
 
     def require_logger(self) -> SimpleLogger:
         if self.model_directory is None:

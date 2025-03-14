@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 
 import contextlib
+from pathlib import Path
 from typing import Literal, cast
 
 import click
 import cv2
 import lightning as L
 import torch
-from lightning.pytorch.callbacks import ModelCheckpoint
+from pytorch_lightning.utilities.model_summary.model_summary import summarize
 from torch import Tensor, nn, optim, utils
 
-from logger import SimpleLogger
 from model import Config, Translator
 from sequence import compare_sequences, display_sequence
 from vocab import Vocab
@@ -99,7 +99,8 @@ class LitTranslator(L.LightningModule):
 
     def _greedy_decode(self, source: Tensor) -> Tensor:
         c, v = self.config, Vocab
-        memory, seq = self._init_sequence(source.unsqueeze(0))
+        # memory, seq = self._init_sequence(source.unsqueeze(0)) FIXME
+        memory, seq = self._init_sequence(source)
         for idx in range(1, c.spad_len-1):
             logits = self._logits(c, memory, seq, idx)
             token = torch.argmax(logits[-1:, :, :], dim=2)
@@ -139,7 +140,8 @@ class LitTranslator(L.LightningModule):
             if len(done) >= beam_width:
                 break
 
-        return max(done, key=lambda x: x[1])[0] if done else beams[0][0]
+        seq = max(done, key=lambda x: x[1])[0] if done else beams[0][0]
+        return seq.to(self.device)
 
     @contextlib.contextmanager
     def use(self, decoding_method: Literal["beam", "greedy"]):
@@ -147,6 +149,24 @@ class LitTranslator(L.LightningModule):
         self._decoding_method = decoding_method
         yield
         self._decoding_method = method
+
+    def forward(self, image: Tensor) -> Tensor:
+        """Forwards one image tensor, and decodes the model's output.
+
+        The default decoding method is "greedy", but it can be switched 
+        to "beam" with the use() method.
+
+        Args:
+            image (Tensor): Input image (height, width)
+
+        Returns:
+            Tensor: The decoded sequence of chords (spad_len, max_chords)
+        """
+        match self._decoding_method:
+            case "beam":
+                return self._beam_decode(image.unsqueeze(0))
+            case "greedy":
+                return self._greedy_decode(image.unsqueeze(0))
 
     def predict_step(self, source: Tensor) -> Tensor:
         match self._decoding_method:
@@ -190,25 +210,103 @@ def train(ctx, epochs: int):
 
 
 @click.command()
+@click.option(
+    "--use-decoding", "-u",
+    type=click.Choice(["greedy", "beam"], case_sensitive=False),
+    default="greedy",
+    help="Select decoding method: 'greedy' (default) or 'beam'."
+)
 @click.pass_context
-def test(ctx):
+def test(ctx, use_decoding: Literal["beam", "greedy"]):
     from click_context import ClickContext
     context = cast(ClickContext, ctx.obj)
     factory = context.require_factory()
 
     _, valid_ds = factory.datasets(valid_split=0.15)
-    loader = utils.data.DataLoader(valid_ds)
+    loader = utils.data.DataLoader(valid_ds, batch_size=1, shuffle=True)
 
-    model, trainer = context.require_model()
+    model = context.require_model()
 
-    for images, gts in loader:
-        with model.use("greedy"):
-            yhats = cast(list[Tensor], trainer.predict(model, images))
+    for image, gt in loader:
+        image, gt = (
+            image.squeeze(0).to(model.device),
+            gt.squeeze(0).to(model.device)
+        )
+        with model.use(use_decoding):
+            yhat = model(image)
+        print("\033[2J\033[H", end="")
+        print(f"edist: {compare_sequences(yhat, gt)}")
+        print(display_sequence(factory.vocab, yhat, gt))
+        cv2.imshow("window", image.transpose(1, 0).cpu().numpy())
+        if cv2.waitKey(0) == ord('q'):
+            return
 
-        for image, yhat, gt in zip(images.unbind(0), yhats, gts):
-            print("\033[2J\033[H", end="")
-            print(f"edist: {compare_sequences(yhat, gt)}")
-            print(display_sequence(factory.vocab, yhat, gt))
-            cv2.imshow("window", image.transpose(1, 0).cpu().numpy())
-            if cv2.waitKey(0) == ord('q'):
-                return
+
+@click.command()
+@click.argument("path", type=click.Path(file_okay=True))
+@click.option("--accuracy/--do-accuracy", "do_accuracy", default=True,
+              help="Computes accuracy against .tokens file.")
+@click.option("--display/--no-display", "do_display", default=True,
+              help="Displays / don't display the computed sequence.")
+@click.option(
+    "--use-decoding", "-u",
+    type=click.Choice(["greedy", "beam"], case_sensitive=False),
+    default="greedy",
+    help="Select decoding method: 'greedy' (default) or 'beam'."
+)
+@click.pass_context
+def predict(
+    ctx, path: Path, do_display: bool, do_accuracy: bool, use_decoding: Literal["beam", "greedy"]
+):
+    """Translates the given PATH image file into kern-like notation.
+
+    Args:
+        path (Path): Path of the image to decode.
+
+    Raises:
+        FileNotFoundError: If the image PATH is not found or can't be loaded, e.g.
+            because it's too wide; Or if accuracy is requested and a matching .tokens
+            file couldn't be loaded.
+    """
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    factory = context.require_factory()
+    model = context.require_model()
+
+    path = Path(path)
+
+    # Loads both the image and the sequence.
+    source = factory.load_image(path).to(model.device)
+    if do_accuracy:
+        seq = factory.load_sequence(
+            path.with_suffix(".tokens")).to(model.device)
+
+    with model.use(use_decoding):
+        yhat = model(source)
+    if do_accuracy:
+        assert seq is not None, "load() failed to check target wasn't None."
+        accuracy = compare_sequences(yhat.to("cuda"), seq)
+        print(f"Accuracy: {100.0 * accuracy:2.2f}")
+    if do_display:
+        print(display_sequence(factory.vocab, yhat))
+
+
+@click.command()
+@click.option(
+    "-v", "--verbose",
+    count=True, default=1,
+    help="Level of details, use -v, -vv, -vvv."
+)
+@click.pass_context
+def summary(ctx, verbose: int):
+    from click_context import ClickContext
+    context = cast(ClickContext, ctx.obj)
+    model = context.require_model()
+    match verbose:
+        case 1:
+            max_depth = 1
+        case 2:
+            max_depth = 2
+        case 3:
+            max_depth = -1
+    print(summarize(model, max_depth=max_depth))    # type: ignore
