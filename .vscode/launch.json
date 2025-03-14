@@ -39,7 +39,8 @@
                 // "random-check"
                 // "-m", "untracked/eos", "train"
                 // "-m", "untracked/eos", "test"
-                "-m", "untracked/eos", "predict", "/home/anselm/datasets/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
+                // "-m", "untracked/eos", "predict", "/home/anselm/datasets/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
+                "show"
             ]
         }
     ]

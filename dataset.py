@@ -27,13 +27,19 @@ class FixedHeightResize(v2.Transform):
         super(FixedHeightResize, self).__init__()
         self.height = height
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def forward(self, image: Tensor) -> Tensor:
         _, height, width = image.shape
         if height == self.height:
             return image
         else:
             ratio = float(self.height) / float(height)
             return v2.functional.resize(image, [self.height, math.ceil(width * ratio)])
+
+
+class Binarize(v2.Transform):
+
+    def forward(self, image: Tensor) -> Tensor:
+        return 255 - 255 * (image > 200)
 
 
 class Dataset(utils.data.Dataset):
@@ -172,11 +178,13 @@ class Factory:
         self.config = config or Config()
         self.stats_transforms = v2.Compose([
             v2.Grayscale(),
+            Binarize(),
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
         ])
         self.train_transforms = v2.Compose([
             v2.Grayscale(),
+            Binarize(),
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
             v2.Normalize(mean=[228.06], std=[62.78])
