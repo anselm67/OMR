@@ -187,7 +187,7 @@ class Factory:
             Binarize(),
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
-            v2.Normalize(mean=[228.06], std=[62.78])
+            v2.Normalize(mean=[37.1844], std=[89.7948])
         ])
         self._load(refresh)
         self._vocab(refresh)
