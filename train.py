@@ -12,7 +12,7 @@ from pytorch_lightning.utilities.model_summary.model_summary import summarize
 from torch import Tensor, nn, optim, utils
 
 from model import Config, Translator
-from sequence import compare_sequences2, display_sequence
+from sequence import compare_sequences, display_sequence
 from vocab import Vocab
 
 
@@ -256,7 +256,7 @@ def test(ctx, use_decoding: Literal["beam", "greedy"]):
         with model.use(use_decoding):
             yhat = model(image)
         print("\033[2J\033[H", end="")
-        print(f"edist: {compare_sequences2(yhat, gt)}")
+        print(f"edist: {compare_sequences(yhat, gt)}")
         print(display_sequence(factory.vocab, yhat, gt))
         cv2.imshow("window", image.transpose(1, 0).cpu().numpy())
         if cv2.waitKey(0) == ord('q'):
@@ -306,7 +306,7 @@ def predict(
         yhat = model(source)
     if do_accuracy:
         assert seq is not None, "load() failed to check target wasn't None."
-        accuracy = compare_sequences2(yhat.to("cuda"), seq)
+        accuracy = compare_sequences(yhat.to("cuda"), seq)
         print(f"Accuracy: {100.0 * accuracy:2.2f}")
     if do_display:
         print(display_sequence(factory.vocab, yhat))
