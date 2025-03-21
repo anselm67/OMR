@@ -116,6 +116,7 @@ class Stats:
     i_std: float = 0
 
     spad_len: int = 0
+    max_chord: int = 0
 
     def update(self, img: Tensor, seq: list[str]):
         self.count += 1
@@ -129,13 +130,22 @@ class Stats:
         # Update sequence statistics.
         seq_len = len(seq)
         self.spad_len = max(seq_len, self.spad_len)
+        max_chord = 0
+        for token in seq:
+            max_chord = max(len(token.strip().split()), max_chord)
+        self.max_chord = max(max_chord, self.max_chord)
+
+    def finalize(self):
+        self.i_mean /= self.count
+        self.i_std /= self.count
 
     def log(self):
         logging.info(
             "Dataset created:\n" +
             f"ipad_shape    = {self.ipad_shape},\n" +
             f"i_mean, i_std = {self.i_mean / self.count:.3f}, {self.i_std / self.count:.3f}\n" +
-            f"spad_len      = {self.spad_len}"
+            f"spad_len      = {self.spad_len}\n" +
+            f"max_chord     = {self.max_chord}"
         )
 
     def save(self, json_path: Path):
@@ -154,6 +164,7 @@ class Factory:
     home: Path
     data: list[Path]
     vocab: Vocab
+    stats: Stats
 
     train_transforms: v2.Compose
     stats_transforms: v2.Compose
@@ -182,14 +193,15 @@ class Factory:
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
         ])
+        # Gets or computes the stats before setting up the train transforms.
+        self.stats = self._load(refresh)
         self.train_transforms = v2.Compose([
             v2.Grayscale(),
             Binarize(),
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
-            v2.Normalize(mean=[37.1844], std=[89.7948])
+            v2.Normalize(mean=[self.stats.i_mean], std=[self.stats.i_std]),
         ])
-        self._load(refresh)
         self._vocab(refresh)
         self.config = replace(self.config, vocab_size=len(self.vocab))
         self.data_loader = Dataset(
@@ -224,7 +236,7 @@ class Factory:
         stats.update(self.stats_transforms(img), seq)
         return True
 
-    def _load(self, refresh: bool):
+    def _load(self, refresh: bool) -> Stats:
         pkl_path = Path(self.home) / 'data.pkl'
         if refresh or not pkl_path.exists():
             logging.info("Creating data set.")
@@ -240,11 +252,14 @@ class Factory:
                             logging.info(f"{path} rejected (too large).")
             with open(pkl_path, "wb+") as f:
                 pickle.dump(self.data, f)
+            stats.finalize()
             stats.save(pkl_path.with_name("stats.json"))
         else:
             logging.info(f"Loading data set from {pkl_path}.")
+            stats = Stats.from_json(pkl_path.with_name("stats.json"))
             with open(pkl_path, "rb") as f:
                 self.data = cast(list[Path], pickle.load(f))
+        return stats
 
     def _vocab(self, refresh: bool = False):
         pkl_path = Path(self.home) / "vocab.pkl"
