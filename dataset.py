@@ -189,7 +189,7 @@ class Factory:
         self.config = config or Config()
         self.stats_transforms = v2.Compose([
             v2.Grayscale(),
-            Binarize(),
+            Binarize() if config.binarize else v2.Identity(),
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
         ])
@@ -197,7 +197,7 @@ class Factory:
         self.stats = self._load(refresh)
         self.train_transforms = v2.Compose([
             v2.Grayscale(),
-            Binarize(),
+            Binarize() if config.binarize else v2.Identity(),
             FixedHeightResize(self.config.ipad_shape[0]),
             v2.ToDtype(torch.float),
             v2.Normalize(mean=[self.stats.i_mean], std=[self.stats.i_std]),

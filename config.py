@@ -16,6 +16,10 @@ class Config:
     max_chord: int = 12
     vocab_size: int = -1
 
+    # Warning: changing this value requires init-dataset to be run again,
+    # so that the mean and std are recalculated.
+    binarize: bool = False
+
     # Image embedder config.
     image_reducer: int = 64
     embed_size: int = 256
