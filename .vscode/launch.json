@@ -27,10 +27,10 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "args": [
-                // "tokenize", "/home/anselm/datasets/kern-sheet/mozart/piano/sonata/sonata06-3e.krn"
+                "tokenize", "/home/anselm/datasets/GrandPiano/chopin/preludes/prelude28-17/original_m-10-13.krn"
                 // "kern-stats", "/home/anselm/Downloads/KernSheet"
                 // "-m", "untracked/distorted", "-d", "/data/datasets/GrandPiano", "train"
-                "-m", "untracked/binarized", "test"
+                // "-m", "untracked/binarized", "test"
                 // "-m", "untracked/eos", "predict", "/home/anselm/datasets/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
                 // "show"
                 // "init-dataset", "--refresh", "/home/anselm/datasets/GrandPiano"
