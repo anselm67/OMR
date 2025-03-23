@@ -8,6 +8,7 @@ import click
 import cv2
 import lightning as L
 import torch
+from lightning.pytorch.callbacks import ModelCheckpoint
 from pytorch_lightning.utilities.model_summary.model_summary import summarize
 from torch import Tensor, nn, optim, utils
 
@@ -200,6 +201,12 @@ def train(ctx, epochs: int):
         max_epochs=epochs,
         limit_val_batches=10,
         log_every_n_steps=25,
+        callbacks=[
+            ModelCheckpoint(
+                dirpath=context.model_directory,
+                save_last=True
+            )
+        ]
     )
 
     # Prepares the train and valid loaders.
