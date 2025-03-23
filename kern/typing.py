@@ -123,30 +123,43 @@ class Duration:
     duration: int
     dots: int = 0
 
+    def __lt__(self, other) -> bool:
+        if isinstance(other, Duration):
+            return self.duration < other.duration
+        return NotImplemented
 
-@dataclass
+
+@dataclass(frozen=True)
 class Token:
     pass
 
+    def __lt__(self, other) -> bool:
+        return NotImplemented
 
-@dataclass
+
+@dataclass(frozen=True)
 class Clef(Token):
     pitch: Pitch
 
+    def __lt__(self, other) -> bool:
+        if isinstance(other, Clef):
+            return self.pitch < other.pitch
+        return NotImplemented
 
-@dataclass
+
+@dataclass(frozen=True)
 class Key(Token):
     is_flats: bool
     count: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class Meter(Token):
     numerator: int
     denominator: int
 
 
-@dataclass
+@dataclass(frozen=True)
 class Bar(Token):
     text: str
     barno: int
@@ -154,20 +167,6 @@ class Bar(Token):
     is_repeat_start: bool
     is_repeat_end: bool
     is_invisible: bool
-
-    def __init__(
-        self, text: str, barno: int,
-        is_final: bool,
-        is_repeat_start: bool,
-        is_repeat_end: bool,
-        is_invisible: bool
-    ):
-        self.text = text
-        self.barno = barno
-        self.is_final = is_final
-        self.is_repeat_start = is_repeat_start
-        self.is_repeat_end = is_repeat_end
-        self.is_invisible = is_invisible
 
     def requires_valid_bar_number(self):
         return not (
@@ -178,27 +177,32 @@ class Bar(Token):
         )
 
 
-@dataclass
+@dataclass(frozen=True)
 class Continue(Token):
     pass
 
 
-@dataclass
+@dataclass(frozen=True)
 class Comment(Token):
     text: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class SpinePath(Token):
     indicator: str
 
 
-@dataclass
+@dataclass(frozen=True)
 class Rest(Token):
     duration: Duration
 
+    def __lt__(self, other) -> bool:
+        if other is Rest:
+            return self.duration < other.duration
+        return True
 
-@dataclass
+
+@dataclass(frozen=True)
 class Note(Token):
     pitch: Pitch
     duration: Optional[Duration]        # May be None e.g. for gracenotes
@@ -219,7 +223,12 @@ class Note(Token):
     is_upper_thrill: bool = False
     is_lower_thrill: bool = False
 
+    def __lt__(self, other) -> bool:
+        if isinstance(other, Note):
+            return self.pitch < other.pitch
+        return False
 
-@dataclass
+
+@dataclass(frozen=True)
 class Chord(Token):
     notes: List[Note]

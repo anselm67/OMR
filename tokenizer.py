@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import os
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TextIO, Tuple, Type, Union, cast
+from typing import Any, Callable, Iterable, TextIO, Type, cast
 
 import click
 
@@ -36,7 +37,7 @@ class IgnoredSpine(Spine):
 
 
 class TokenFormatter:
-    formatters: Dict[Type, Callable[[Spine, Token], str]]
+    formatters: dict[Type, Callable[[Token], str]]
 
     def __init__(self):
         self.barno = 1
@@ -52,7 +53,7 @@ class TokenFormatter:
             SpinePath: self.format_spine_path,
         }
 
-    def format_unknown(self, spine: Spine, token: Token) -> str:
+    def format_unknown(self, token: Token) -> str:
         raise ValueError(f"No format for token {token}")
 
     def format_duration(self, duration: Duration) -> str:
@@ -65,7 +66,7 @@ class TokenFormatter:
     def format_pitch(self, pitch: Pitch) -> str:
         return pitch.name
 
-    def format_bar(self, spine: Spine, token: Token) -> str:
+    def format_bar(self, token: Token) -> str:
         bar = cast(Bar, token)
         barno_str = str(bar.barno) if bar.barno >= 0 else ""
         if bar.is_final:
@@ -73,26 +74,26 @@ class TokenFormatter:
         else:
             return f"={barno_str}"
 
-    def format_rest(self, spine: Spine, token: Token) -> str:
+    def format_rest(self, token: Token) -> str:
         rest = cast(Rest, token)
         return f"rest/{self.format_duration(rest.duration)}"
 
-    def format_clef(self, spine: Spine, token: Token) -> str:
+    def format_clef(self, token: Token) -> str:
         clef = cast(Clef, token)
         return f"clef-{self.format_pitch(clef.pitch)}"
 
-    def format_key(self, spine: Spine, token: Token) -> str:
+    def format_key(self, token: Token) -> str:
         key = cast(Key, token)
         return f"key{("-" if key.is_flats else "#") * key.count}"
 
-    def format_meter(self, spine: Spine, token: Token) -> str:
+    def format_meter(self, token: Token) -> str:
         meter = cast(Meter, token)
         return f"{meter.numerator}/{meter.denominator}"
 
-    def format_continue(self,  spine: Spine, _: Token) -> str:
+    def format_continue(self, _: Token) -> str:
         return "."
 
-    def format_note(self, spine: Spine, token: Token) -> str:
+    def format_note(self, token: Token) -> str:
         note = cast(Note, token)
         accidentals = ("#" * note.sharps) or ("-" * note.flats)
         duration_text = ""
@@ -107,25 +108,23 @@ class TokenFormatter:
         )
         return text
 
-    def format_chord(self, spine: Spine, token: Token) -> str:
+    def format_chord(self, token: Token) -> str:
         chord = cast(Chord, token)
-        text = "\t".join([self.format_note(spine, note)
-                          for note in chord.notes])
+        text = "\t".join([self.format_note(note) for note in chord.notes])
         return text
 
-    def format_spine_path(self, spine: Spine, token: Token) -> str:
-        return self.format_continue(spine, Continue())
+    def format_spine_path(self, _: Token) -> str:
+        return self.format_continue(Continue())
 
-    def format(self, spine: Spine, token: Token) -> str:
-        text = self.formatters.get(
-            token.__class__, self.format_unknown)(spine, token)
+    def format(self, token: Token) -> str:
+        text = self.formatters.get(token.__class__, self.format_unknown)(token)
         self.last_token = token
         return text
 
 
 class BaseHandler(Parser[Spine].Handler):
 
-    spines: List[Spine]
+    spines: list[Spine]
 
     def __init__(self):
         super(BaseHandler, self).__init__()
@@ -135,8 +134,8 @@ class BaseHandler(Parser[Spine].Handler):
         return self.spines.index(spine)
 
     def open_spine(self,
-                   spine_type: Optional[str] = None,
-                   parent: Optional[Spine] = None) -> Spine:
+                   spine_type: str | None = None,
+                   parent: Spine | None = None) -> Spine:
         match spine_type:
             case "**dynam" | "**dynam/2" | "**mxhm" | "**recip" | "**fb":
                 spine = IgnoredSpine()
@@ -164,7 +163,7 @@ class BaseHandler(Parser[Spine].Handler):
 class NormHandler(BaseHandler):
 
     formatter: TokenFormatter
-    output: Optional[TextIO]
+    output: TextIO | None
 
     # The current bar number, when none provided.
     bar_numbering: bool
@@ -172,7 +171,7 @@ class NormHandler(BaseHandler):
     bar_seen: bool
     bar_zero: bool
 
-    def __init__(self, output_path: Optional[Path]):
+    def __init__(self, output_path: Path | None):
         super(NormHandler, self).__init__()
         self.output = output_path and open(output_path, 'w+')
         self.formatter = TokenFormatter()
@@ -181,9 +180,12 @@ class NormHandler(BaseHandler):
         self.bar_seen = False
         self.bar_zero = False
 
-    last_metric: Optional[Meter] = None
+    last_metric: Meter | None = None
 
-    def should_skip(self, tokens: List[Tuple[Spine, Token]]) -> bool:
+    def check_type(self, tokens: Iterable[Token], t: Type) -> bool:
+        return all([isinstance(token, t) for token in tokens])
+
+    def should_skip(self, tokens: list[tuple[Spine, Token]]) -> bool:
         # Sometimes we get both a 4/4 and C meter, skip.
         token = tokens[0][1]
         if isinstance(token, Meter) and all([t == token for _, t in tokens]):
@@ -192,15 +194,15 @@ class NormHandler(BaseHandler):
             self.last_metric = token
         else:
             self.last_metric = None
-        # Skips all comments.
-        if all([isinstance(token, Comment) for _, token in tokens]):
+        # Skips all Comment.
+        if self.check_type((t for _, t in tokens), Comment):
             return True
         # Pure spine paths aren't interesting to us.
-        if all([isinstance(token, SpinePath) for _, token in tokens]):
+        if self.check_type((t for _, t in tokens), SpinePath):
             return True
         return False
 
-    def fix_bar(self, tokens: List[Tuple[Spine, Token]]) -> bool:
+    def fix_bar(self, tokens: list[tuple[Spine, Token]]) -> list[tuple[Spine, Token]] | None:
 
         def requires_bar(t: Token) -> bool:
             if isinstance(t, (Note, Chord, Rest)):
@@ -216,12 +218,12 @@ class NormHandler(BaseHandler):
                 bar = Bar("*fake*", 0, False, False, False, False)
                 if self.output:
                     self.output.write('\t'.join([
-                        self.formatter.format(spine, bar)for spine, _ in tokens
+                        self.formatter.format(bar)for _, _ in tokens
                     ]) + "\n")
                 self.bar_zero = True
 
         # Adjusts the bar number when none provided.
-        if all([isinstance(token, Bar) for _, token in tokens]):
+        if self.check_type((t for _, t in tokens), Bar):
             bars = [cast(Bar, token) for _, token in tokens]
             if self.bar_number <= 2:
                 if all([bar.barno < 0 and bar.requires_valid_bar_number() for bar in bars]):
@@ -229,34 +231,83 @@ class NormHandler(BaseHandler):
                 self.bar_zero = True
 
             if self.bar_numbering:
-                for bar in bars:
-                    bar.barno = self.bar_number
+                bars = [replace(bar, barno=self.bar_number) for bar in bars]
                 self.bar_number += 1
             elif (barno := max((bar.barno for bar in bars))) >= 0:
                 self.bar_number = barno + 1
             elif any((bar.requires_valid_bar_number() for bar in bars if bar.barno < 0)):
                 self.bar_number += 1
 
-            for bar in bars:
-                if bar.is_final and bar.barno < 0:
-                    bar.barno = self.bar_number
-                # TODO We're not supposed to see any more bars, so it's ok
-                # not to incrememt self.bar_number
+            bars = [
+                replace(
+                    bar, barno=self.bar_number) if bar.is_final and bar.barno < 0 else bar
+                for bar in bars
+            ]
+            # TODO We're not supposed to see any more bars, so it's ok
+            # not to incrememt self.bar_number
 
-            return any((bar.barno >= 0 for bar in bars))
+            if any((bar.barno >= 0 for bar in bars)):
+                return list(zip([spine for spine, _ in tokens], bars))
+            else:
+                return None
 
-        return True
+        return tokens
 
-    def append(self, tokens: List[Tuple[Spine, Token]]):
+    def unique(self, tokens: list[Token]) -> list[Token]:
+        seen = set()
+        return [t for t in tokens if not (t in seen or seen.add(t))]
+
+    def flatten(self, tokens: list[tuple[Spine, Token]]) -> list[Token]:
+        toks = [
+            t for _, t in tokens if not isinstance(t, (Continue, SpinePath))
+        ]
+        if len(toks) == 0:
+            return []
+        if self.check_type(toks, Clef):
+            toks = self.unique(toks)
+            if len(toks) > 2:
+                print(f"FIXME: got {len(toks)} clefs.")
+                raise NotImplementedError("FIXME")
+        elif self.check_type(toks, Key):
+            toks = self.unique(toks)
+            if len(toks) != 1:
+                print(f"FIXME: got {len(toks)} keys.")
+                raise NotImplementedError("FIXME")
+            toks = [toks[0], toks[0]]
+        elif self.check_type(toks, Meter):
+            toks = self.unique(toks)
+            if len(toks) != 1:
+                print(f"FIXME: got {len(toks)} meters.")
+                raise NotImplementedError("FIXME")
+            toks = [toks[0], toks[0]]
+        elif self.check_type(toks, Bar):
+            toks = self.unique(toks)
+            if len(toks) != 1:
+                print(f"FIXME: got {len(toks)} bars.")
+                raise NotImplementedError("FIXME")
+        elif self.check_type(toks, Rest):
+            toks = [max(toks)]
+        elif all([isinstance(t, (Rest, Note, Chord)) for t in toks]):
+            toks = [note for n in toks for note in (
+                n.notes if isinstance(n, Chord) else [n])]
+            # We should be left with only Rest, Note and Chords.
+            toks = sorted(toks)
+        else:
+            print(f"FIXME: got a mix of tokens.")
+
+        return toks
+
+    def append(self, tokens: list[tuple[Spine, Token]]):
         tokens = [(spine, token) for spine, token in tokens
                   if not isinstance(spine, IgnoredSpine)]
         if self.should_skip(tokens):
             return
-        if not self.fix_bar(tokens):
+        if not (fixed_bars := self.fix_bar(tokens)):
             return
+        tokens = fixed_bars
         if self.output:
             self.output.write('\t'.join([
-                self.formatter.format(spine, token)for spine, token in tokens
+                self.formatter.format(tok) for tok in self.flatten(tokens)
             ]) + "\n")
 
     def done(self):
@@ -268,16 +319,16 @@ class StatsHandler(BaseHandler):
 
     bar_count: int = 0
     chord_count: int = 0
-    finish: Optional[Callable[['StatsHandler'], None]]
+    finish: Callable[['StatsHandler'], None] | None
 
-    def __init__(self, finish: Optional[Callable[['StatsHandler'], None]] = None):
+    def __init__(self, finish: Callable[['StatsHandler'], None] | None = None):
         super(StatsHandler, self).__init__()
         self.finish = finish
 
     def has(self, cls, tokens) -> bool:
         return any([isinstance(token, cls) for _, token in tokens])
 
-    def append(self, tokens: List[Tuple[Spine, Token]]):
+    def append(self, tokens: list[tuple[Spine, Token]]):
         tokens = [(spine, token) for spine, token in tokens
                   if not isinstance(spine, IgnoredSpine)]
         if self.has(Bar, tokens):
@@ -292,7 +343,7 @@ class StatsHandler(BaseHandler):
 
 def parse_file(
     path: Path,
-    handler_obj: Union[Parser.Handler, Callable[[Path], Parser.Handler]],
+    handler_obj: Parser.Handler | Callable[[Path], Parser.Handler],
     show_failed: bool = True,
     enable_warnings: bool = False,
 ) -> bool:
@@ -316,7 +367,7 @@ def parse_directory(
     handler_factory: Callable[[Path], Parser.Handler],
     show_failed: bool = True,
     enable_warnings: bool = False,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     count, failed = 0, 0
     for root, _, filenames in os.walk(path):
         for filename in filenames:
@@ -334,7 +385,7 @@ def tokenize_directory(
     write_output: bool = True,
     show_failed: bool = True,
     enable_warnings: bool = False,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     def handler_factory(source: Path) -> Parser.Handler:
         output_path = source.with_suffix(".tokens") if write_output else None
         handler = NormHandler(output_path)
@@ -347,7 +398,7 @@ def stats_directory(
     path: Path,
     show_failed: bool = True,
     enable_warnings: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     chord_count = 0
     bar_count = 0
 
@@ -381,7 +432,7 @@ def stats_directory(
 @click.option("--enable-warnings", "enable_warnings", is_flag=True,
               help="Enables parser warnings.")
 def tokenize(
-    source: List[Path],
+    source: list[Path],
     no_output: bool = False,
     show_failed: bool = True,
     enable_warnings: bool = False
@@ -421,7 +472,7 @@ def tokenize(
                 type=click.Path(dir_okay=True, exists=True, readable=True),
                 required=True)
 def kern_stats(
-    source: List[Path],
+    source: list[Path],
     enable_warnings: bool = False
 ):
     """Parses all .kern files in DATADIR and computes some stats.
