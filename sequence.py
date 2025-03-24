@@ -35,6 +35,7 @@ def display_sequence(vocab: Vocab, yhat: Tensor, gt: None | Tensor = None) -> st
             if (s := chord_repr(vocab, chord)):
                 buffer.write(f"{s}\n")
     else:
+        buffer.write(f"Ground Truth                            yHat\n")
         yhat_done, gt_done = False, False
         for chord_hat, chord_gt in zip(yhat, gt):
             if is_tok(chord_hat, vocab.SOS):
