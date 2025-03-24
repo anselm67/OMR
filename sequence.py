@@ -47,7 +47,7 @@ def display_sequence(vocab: Vocab, yhat: Tensor, gt: None | Tensor = None) -> st
             s_gt = chord_repr(vocab, chord_gt)
             s_hat = chord_repr(vocab, chord_hat)
             if s_gt or s_hat:
-                if sorted(s_gt) != sorted(s_hat):
+                if s_gt != s_hat:
                     buffer.write("\033[31m" f"{s_gt:<40}{s_hat}" "\033[0m\n")
                 else:
                     buffer.write(f"{s_gt:<40}{s_hat}\n")
