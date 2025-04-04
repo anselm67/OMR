@@ -1,7 +1,6 @@
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional
 
 
 class Pitch(Enum):
@@ -118,15 +117,43 @@ def pitch_from_clef(clef: str) -> Pitch:
     return pitch_from_note_and_octave(name, octave)
 
 
-@dataclass
+@dataclass(frozen=True)
 class Duration:
     duration: int
     dots: int = 0
 
     def __lt__(self, other) -> bool:
         if isinstance(other, Duration):
-            return self.duration < other.duration
+            return self.length < other.length
         return NotImplemented
+
+    @property
+    def length(self) -> float:
+        return (1 / self.duration) * sum(1 / (2**i) for i in range(self.dots + 1))
+
+    def __add__(self, other) -> 'Duration':
+        if isinstance(other, Duration):
+            return Duration.from_length(self.length + other.length)
+        return NotImplemented
+
+    def __sub__(self, other) -> 'Duration':
+        if isinstance(other, Duration):
+            return Duration.from_length(self.length - other.length)
+        return NotImplemented
+
+    @classmethod
+    def from_length(cls, length: float) -> 'Duration':
+        duration = 1
+        while duration > length:
+            duration /= 2
+        remaining = length - duration
+        dot_length = duration / 2
+        dot_count = 0
+        while remaining > 0:
+            remaining -= dot_length
+            dot_length /= 2
+            dot_count += 1
+        return cls(int(1 / duration), dot_count)
 
 
 @dataclass(frozen=True)
@@ -193,19 +220,23 @@ class SpinePath(Token):
 
 
 @dataclass(frozen=True)
-class Rest(Token):
-    duration: Duration
+class DurationToken(Token):
+    duration: Duration | None
 
     def __lt__(self, other) -> bool:
-        if other is Rest:
-            return self.duration < other.duration
+        if isinstance(other, DurationToken):
+            return self.duration is None or self.duration < other.duration
         return True
 
 
 @dataclass(frozen=True)
-class Note(Token):
+class Rest(DurationToken):
+    pass
+
+
+@dataclass(frozen=True)
+class Note(DurationToken):
     pitch: Pitch
-    duration: Optional[Duration]        # May be None e.g. for gracenotes
     flats: int = 0
     sharps: int = 0
     starts_tie: bool = False
@@ -231,4 +262,4 @@ class Note(Token):
 
 @dataclass(frozen=True)
 class Chord(Token):
-    notes: List[Note]
+    notes: list[Note]
