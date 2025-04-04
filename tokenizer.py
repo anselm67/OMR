@@ -295,13 +295,13 @@ class NormHandler(BaseHandler):
                     f"Got too many bars ({len(toks)}), expected 1.")
         elif self.check_type(toks, Rest):
             toks = [max(toks)]
-        elif self.check_type(toks, DurationToken):
+        else:
             notes = [note for n in toks for note in (
                 n.notes if isinstance(n, Chord) else [n])]
-            # We should be left with only Rest, Note and Chords.
-            toks = sorted(toks)
-        else:
-            print(f"FIXME: got a mix of tokens.")
+            if self.check_type(notes, DurationToken):
+                toks = sorted(notes)
+            else:
+                print(f"FIXME: got a mix of tokens.")
 
         return toks
 
