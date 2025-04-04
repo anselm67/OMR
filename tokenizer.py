@@ -14,6 +14,7 @@ from kern import (
     Comment,
     Continue,
     Duration,
+    DurationToken,
     Key,
     Meter,
     Note,
@@ -82,6 +83,7 @@ class TokenFormatter:
 
     def format_rest(self, token: Token) -> str:
         rest = cast(Rest, token)
+        assert rest.duration
         return f"rest/{self.format_duration(rest.duration)}"
 
     def format_clef(self, token: Token) -> str:
@@ -272,29 +274,29 @@ class NormHandler(BaseHandler):
         if self.check_type(toks, Clef):
             toks = self.unique(toks)
             if len(toks) > 2:
-                print(f"FIXME: got {len(toks)} clefs.")
-                raise NotImplementedError("FIXME")
+                raise ValueError(
+                    f"Got too many clefs ({len(toks)}), expected 2.")
         elif self.check_type(toks, Key):
             toks = self.unique(toks)
             if len(toks) != 1:
-                print(f"FIXME: got {len(toks)} keys.")
-                raise NotImplementedError("FIXME")
+                raise ValueError(
+                    f"Got too many keys ({len(toks)}), expected 1.")
             toks = [toks[0], toks[0]]
         elif self.check_type(toks, Meter):
             toks = self.unique(toks)
             if len(toks) != 1:
-                print(f"FIXME: got {len(toks)} meters.")
-                raise NotImplementedError("FIXME")
+                raise ValueError(
+                    f"Got too many meters ({len(toks)}), expected 1.")
             toks = [toks[0], toks[0]]
         elif self.check_type(toks, Bar):
             toks = self.unique(toks)
             if len(toks) != 1:
-                print(f"FIXME: got {len(toks)} bars.")
-                raise NotImplementedError("FIXME")
+                raise ValueError(
+                    f"Got too many bars ({len(toks)}), expected 1.")
         elif self.check_type(toks, Rest):
             toks = [max(toks)]
-        elif all([isinstance(t, (Rest, Note, Chord)) for t in toks]):
-            toks = [note for n in toks for note in (
+        elif self.check_type(toks, DurationToken):
+            notes = [note for n in toks for note in (
                 n.notes if isinstance(n, Chord) else [n])]
             # We should be left with only Rest, Note and Chords.
             toks = sorted(toks)
