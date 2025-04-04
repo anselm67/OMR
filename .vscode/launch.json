@@ -27,12 +27,12 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "args": [
-                // "tokenize", "/home/anselm/datasets/GrandPiano/"
+                "tokenize", "/home/anselm/datasets/GrandPiano/"
                 // "kern-stats", "/home/anselm/Downloads/KernSheet"
                 // "-m", "untracked/newtok", "train"
                 // "-m", "untracked/newtok", "test"
                 // "-m", "untracked/eos", "predict", "/home/anselm/datasets/GrandPiano/mozart/piano-sonatas/sonata01-1/min3_up_m-100-103.jpg"
-                "show"
+                // "show"
                 // "init-dataset", "--refresh", "/home/anselm/datasets/GrandPiano"
             ]
         }
